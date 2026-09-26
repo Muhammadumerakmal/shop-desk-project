@@ -1,0 +1,14 @@
+{
+  "shop": "Al-Noor Electronics",
+  "currency": "PKR",
+  "products": [
+    {"sku": "KTL-01", "name": "Electric kettle 1.7L", "price": 4200, "stock": 12},
+    {"sku": "FAN-22", "name": "Pedestal fan", "price": 9800, "stock": 0},
+    {"sku": "IRN-05", "name": "Steam iron", "price": 6500, "stock": 7},
+    {"sku": "BLN-10", "name": "Blender 600W", "price": 8900, "stock": 4},
+    {"sku": "TST-03", "name": "Two-slice toaster", "price": 5600, "stock": 9},
+    {"sku": "LED-12", "name": "LED bulb 12W", "price": 450, "stock": 150},
+    {"sku": "HTR-07", "name": "Oil-filled room heater", "price": 11500, "stock": 3},
+    {"sku": "EXT-04", "name": "Extension board 4-socket", "price": 1350, "stock": 40}
+  ]
+}
