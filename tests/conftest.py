@@ -69,13 +69,16 @@ def catalogue_file(tmp_path) -> Path:
 @pytest.fixture
 def make_context(catalogue_file):
     def _make(tier: str = "walk_in", customer_id: str = "CUST-7781", **kwargs) -> ShopContext:
-        catalogue = load_catalogue(catalogue_file)
+        # a caller may point the context at another catalogue (XR-4); everything else about the
+        # shop is read from whichever file is in force.
+        path = kwargs.pop("catalogue_path", catalogue_file)
+        catalogue = load_catalogue(path)
         return ShopContext(
             shop=catalogue.shop,
             currency=catalogue.currency,
             customer_id=customer_id,
             tier=tier,
-            catalogue_path=catalogue_file,
+            catalogue_path=path,
             **kwargs,
         )
 

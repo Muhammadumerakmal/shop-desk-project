@@ -6,6 +6,7 @@ what the file says *now*, not what it said when the process started.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -43,6 +44,9 @@ class Catalogue:
     shop: str
     currency: str
     products: dict[str, Product]
+    # SHA-256 of the file's bytes (XR-3). Any edit to the file changes it, which is what
+    # invalidates the price cache: a cached figure belongs to one exact version of the file.
+    fingerprint: str = ""
 
     def get(self, sku: str) -> Product | None:
         return self.products.get(sku.strip().upper())
@@ -86,7 +90,8 @@ def load_catalogue(path: Path | str | None = None) -> Catalogue:
     """Read and validate the catalogue file. Raises CatalogueError with a readable message."""
     path = Path(path) if path else CATALOGUE_PATH
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
+        raw_bytes = path.read_bytes()
+        raw = json.loads(raw_bytes)
         products = {}
         for item in raw["products"]:
             product = Product(
@@ -98,7 +103,12 @@ def load_catalogue(path: Path | str | None = None) -> Catalogue:
             if product.price < 0 or product.stock < 0:
                 raise ValueError(f"negative price or stock for {product.sku}")
             products[product.sku] = product
-        return Catalogue(shop=str(raw["shop"]), currency=str(raw["currency"]), products=products)
+        return Catalogue(
+            shop=str(raw["shop"]),
+            currency=str(raw["currency"]),
+            products=products,
+            fingerprint=hashlib.sha256(raw_bytes).hexdigest(),
+        )
     except FileNotFoundError as exc:
         raise CatalogueError(f"The catalogue file {path.name} was not found.") from exc
     except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:

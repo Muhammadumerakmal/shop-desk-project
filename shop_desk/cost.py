@@ -81,6 +81,15 @@ class CostLedger:
     calls: list[CallRecord] = field(default_factory=list)
     runs: list[RunRecord] = field(default_factory=list)
     turns: list[TurnRecord] = field(default_factory=list)
+    # XR-4: a refusal is the one event in this project that makes a turn cost twice, so it is
+    # counted where the cost is counted.
+    guardrail_blocks: int = 0
+    requotes: int = 0
+
+    def block(self, *, requoted: bool) -> None:
+        self.guardrail_blocks += 1
+        if requoted:
+            self.requotes += 1
 
     def resolve_model(self, agent: Agent[Any] | None) -> str:
         """The model name that served this agent: run override > agent's own > global default."""
@@ -127,6 +136,7 @@ class CostLedger:
         models = Counter(m for t in self.turns for m in t.models)
         parts = [
             f"{len(self.turns)} turn(s): {kinds.get('fast-path', 0)} fast-path, {kinds.get('reasoning', 0)} reasoning"
+            + (f", {kinds['cached']} cached at 0 calls (XR-3)" if kinds.get("cached") else "")
             + (f", {kinds['refused']} refused" if kinds.get("refused") else ""),
             f"{calls} model call(s)",
             f"{tokens_in:,} in / {tokens_out:,} out tokens",
@@ -135,6 +145,8 @@ class CostLedger:
         worst = self.most_expensive_turn()
         if worst and worst.tokens:
             parts.append(f"most expensive: turn {worst.turn} ({worst.tokens:,} tokens)")
+        if self.guardrail_blocks:
+            parts.append(f"guardrail blocked {self.guardrail_blocks} answer(s), {self.requotes} re-quoted")
         return "Cost · " + " · ".join(parts)
 
 

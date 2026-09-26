@@ -9,14 +9,15 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
 from shop_desk.catalogue import CATALOGUE_PATH
 from shop_desk.cost import CostLedger
-
-PKT = timezone(timedelta(hours=5), name="PKT")  # Pakistan time, no DST
+from shop_desk.fastpath import PriceCache
+from shop_desk.orders import ORDERS_PATH
+from shop_desk.orders import SHOP_TZ as PKT  # one definition, owned by orders.py
 
 
 def new_order_id() -> str:
@@ -48,6 +49,8 @@ class ShopContext:
     clock: Callable[[], datetime] | None = None  # simulated time for FR-4
     catalogue_path: Path = CATALOGUE_PATH
     ledger: CostLedger = field(default_factory=CostLedger)  # FR-11
+    price_cache: PriceCache = field(default_factory=PriceCache)  # XR-3
+    orders_path: Path = ORDERS_PATH  # XR-1
 
     def now(self) -> datetime:
         return self.clock() if self.clock else datetime.now(PKT)

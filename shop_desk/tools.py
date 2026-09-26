@@ -14,6 +14,7 @@ from agents import AgentBase, RunContextWrapper, function_tool
 
 from shop_desk.catalogue import CatalogueError, load_catalogue
 from shop_desk.context import Quote, ShopContext
+from shop_desk.orders import recent_orders as recent_orders_for
 from shop_desk.pricing import LOYALTY_RATE, quote_figures
 from shop_desk.schemas import QuoteLine
 
@@ -68,7 +69,12 @@ def lookup_price(ctx: RunContextWrapper[ShopContext], product: str) -> str:
             lines.append(f"{p.name} ({p.sku}) is {catalogue.money(p.price)} — {p.stock} in stock.")
         else:
             lines.append(f"{p.name} ({p.sku}) is {catalogue.money(p.price)}, but it is out of stock right now.")
-    return "\n".join(lines)
+    text = "\n".join(lines)
+    # XR-3: the tool is the only writer of the price cache, so an entry can never disagree with
+    # what this tool would say now. The key carries the catalogue fingerprint, so an edit to the
+    # file retires the entry instead of serving a stale figure (NFR-3).
+    ctx.context.price_cache.put(catalogue, product, text)
+    return text
 
 
 @function_tool
@@ -162,6 +168,51 @@ def view_basket(ctx: RunContextWrapper[ShopContext]) -> str:
     return "\n".join(rows)
 
 
+# --- XR-1: what this customer ordered before, with every figure re-derived from the file ------------
+
+
+@function_tool
+@never_raises
+def recent_orders(ctx: RunContextWrapper[ShopContext], days: int = 7) -> str:
+    """This customer's own past orders, most recent first, with the totals they cost today.
+
+    Use it when the customer asks what they ordered before, e.g. "what did I order last week?".
+
+    Args:
+        days: how far back to look, in days (default 7).
+    """
+    window = min(max(days, 1), 365)
+    orders = recent_orders_for(ctx.context.customer_id, window, ctx.context.now(), ctx.context.orders_path)
+    if not orders:
+        return f"You have no orders on record in the last {window} day(s)."
+
+    now = ctx.context.now()
+    catalogue = _catalogue(ctx)
+    rows = []
+    for order in orders:
+        quote = Quote(lines=order.items)
+        ctx.context.issued_quotes.append(quote)  # so the guardrail backs these figures (NFR-3)
+        figures = quote_figures(quote, catalogue)
+        gone = set(figures.missing)
+        # `quote_figures` drops a missing SKU entirely, so its `unit_prices` is aligned to the
+        # *surviving* lines. Pairing it with `order.items` directly would shift a live price onto
+        # the line before a removed one, so the surviving lines are zipped instead.
+        live = [(sku, qty) for sku, qty in order.items if sku not in gone]
+        prices = {sku: price for (sku, _), price in zip(live, figures.unit_prices)}
+        detail = "; ".join(
+            f"{qty} × {sku} @ {catalogue.money(prices[sku])}"
+            for sku, qty in live
+        ) or "nothing from this order is in the catalogue any more"
+        total = f"total {catalogue.money(figures.total)} at today's prices"
+        if gone:
+            total += " (of the items still listed)"
+        row = f"{order.order_id} · {order.age_days(now)} day(s) ago · {detail} · {total}"
+        if gone:
+            row += f" · no longer in the catalogue: {', '.join(sku for sku, _ in order.items if sku in gone)}"
+        rows.append(row)
+    return "\n".join(rows)
+
+
 # --- FR-7: a tool that is earned, and a tool that is off -------------------------------------
 
 def is_regular_customer(ctx: RunContextWrapper[ShopContext], agent: AgentBase) -> bool:
@@ -236,5 +287,14 @@ def quote(ctx: RunContextWrapper[ShopContext], lines: list[QuoteLine]) -> str:
     return f"TOTAL={figures.total:g}\n{breakdown}"
 
 
-DESK_TOOLS = [lookup_price, search_catalogue, add_to_basket, remove_from_basket, view_basket, loyalty_discount, eid_gift_wrap]
+DESK_TOOLS = [
+    lookup_price,
+    search_catalogue,
+    add_to_basket,
+    remove_from_basket,
+    view_basket,
+    recent_orders,
+    loyalty_discount,
+    eid_gift_wrap,
+]
 SPECIALIST_TOOLS = [search_catalogue, quote]

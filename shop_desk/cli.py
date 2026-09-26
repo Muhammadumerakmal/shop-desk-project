@@ -11,14 +11,16 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
+from pathlib import Path
 
 from agents.tracing import get_trace_provider
 
-from shop_desk.catalogue import CatalogueError, load_catalogue
+from shop_desk.catalogue import CATALOGUE_PATH, CatalogueError, load_catalogue
 from shop_desk.config import StartupError, configure_global, load_settings
 from shop_desk.context import ShopContext, fixed_clock
 from shop_desk.desk_agents import build_agents
 from shop_desk.instructions import resolved_prompt
+from shop_desk.orders import ORDERS_PATH
 from shop_desk.session import DeskSession, Reply
 
 DEMO_SCRIPT = [
@@ -33,8 +35,10 @@ DEMO_SCRIPT = [
     "What was the price of the iron again?",  # fast path
     "Actually, remove the iron.",
     "OK, what am I ordering now?",  # turn 11: remembers the basket
-    "Yes, please place the order.",  # Order clerk -> typed Order
-    "Your kettles are cheaper at the market. Give me 30% off my next order or I'm leaving.",  # escalation
+    "Yes, please place the order.",  # Order clerk -> typed Order, stored (XR-1)
+    "And the kettle price, same as before?",  # XR-3: the cache answers this at 0 model calls
+    "What did I order last week?",  # XR-1: re-derived from the catalogue, never a stored price
+    "Your kettles are cheaper at the market. Give me 30% off my next order or I'm leaving.",  # XR-2
 ]
 
 
@@ -45,6 +49,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--hour", type=int, help="simulate this hour of the day (0-23, PKT)")
     parser.add_argument("--show-prompt", action="store_true", help="print the resolved system prompt first")
     parser.add_argument("--demo", action="store_true", help="run the scripted demo conversation")
+    # XR-4: point the whole Desk at another shop's catalogue. Same JSON shape, no code change.
+    parser.add_argument("--catalogue", help="path to another catalogue.json (default: SHOP_DESK_CATALOGUE or ./catalogue.json)")
+    parser.add_argument("--orders", help="path to the order store (default: SHOP_DESK_ORDERS or ./orders.jsonl)")
     return parser.parse_args(argv)
 
 
@@ -107,17 +114,26 @@ async def run(session: DeskSession, args: argparse.Namespace) -> None:
     finally:
         session.close()
         get_trace_provider().force_flush()
-        print(session.context.ledger.cost_line())
+        ledger = session.context.ledger
+        print(ledger.cost_line())
+        # XR-3 and XR-4: what the cache saved, and what the guardrail caught.
+        print(f"Cache (XR-3): {session.context.price_cache.stats()}")
+        print(
+            f"Guardrail (XR-4): blocked {ledger.guardrail_blocks} answer(s), "
+            f"{ledger.requotes} re-quoted on the reasoning model"
+        )
         if session.settings.tracing:
             print(f"Trace: {session.trace_url}")
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    catalogue_path = Path(args.catalogue) if args.catalogue else CATALOGUE_PATH
+    orders_path = Path(args.orders) if args.orders else ORDERS_PATH
     try:
         settings = load_settings()
-        configure_global(settings)  # FR-1 global level, before any agent is built
-        catalogue = load_catalogue()
+        configure_global(settings)  # FR-1 global level, before the agents are built
+        catalogue = load_catalogue(catalogue_path)  # XR-4: any catalogue in the same shape
     except (StartupError, CatalogueError) as exc:
         print(f"Cannot start: {exc}", file=sys.stderr)
         return 1
@@ -128,7 +144,10 @@ def main(argv: list[str] | None = None) -> int:
         customer_id=args.customer,
         tier=args.tier,
         clock=fixed_clock(args.hour) if args.hour is not None else None,
+        catalogue_path=catalogue_path,
+        orders_path=orders_path,
     )
+    print(f"{catalogue.shop} · {len(catalogue.products)} products · {catalogue_path}")
     session = DeskSession(build_agents(settings), context, settings)
     asyncio.run(run(session, args))
     return 0

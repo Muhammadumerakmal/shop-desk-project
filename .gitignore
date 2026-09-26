@@ -1,6 +1,9 @@
 # secrets
 .env
 
+# shop data written at runtime (XR-1)
+orders.jsonl
+
 # python
 __pycache__/
 *.py[cod]

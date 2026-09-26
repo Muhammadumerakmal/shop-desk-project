@@ -22,7 +22,7 @@ from agents import Agent, ModelSettings, RunContextWrapper, RunResult, StopAtToo
 from shop_desk.config import Settings
 from shop_desk.context import ShopContext
 from shop_desk.cost import PricingHooks
-from shop_desk.guardrails import catalogue_guardrail
+from shop_desk.guardrails import bargaining_guardrail, catalogue_guardrail
 from shop_desk.handoff_filters import escalation_filter
 from shop_desk.instructions import desk_instructions, escalation_instructions
 from shop_desk.schemas import EscalationReason, Order
@@ -137,6 +137,9 @@ def build_agents(settings: Settings) -> ShopDeskAgents:
             ),
         ],
         output_guardrails=guardrails,
+        # XR-2: a demand for a discount is caught here, before the Desk model is called, and routed
+        # to the escalation agent. The Desk's own escalate_to_human stays for the other four reasons.
+        input_guardrails=[bargaining_guardrail],
         # FR-3: a price lookup's own output is the final answer; the model never sees it.
         tool_use_behavior=StopAtTools(stop_at_tool_names=[FAST_PATH_TOOL]),
     )

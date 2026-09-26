@@ -17,6 +17,7 @@ from openai import APIError
 
 from agents import (
     AgentsException,
+    InputGuardrailTripwireTriggered,
     MaxTurnsExceeded,
     ModelProvider,
     OutputGuardrailTripwireTriggered,
@@ -29,13 +30,16 @@ from agents import (
 )
 from agents.tracing.scope import Scope
 
-from shop_desk.catalogue import load_catalogue, money
+from shop_desk.catalogue import CatalogueError, load_catalogue, money
 from shop_desk.config import Settings
 from shop_desk.context import ShopContext, new_order_id
 from shop_desk.cost import CostHooks, TurnRecord
 from shop_desk.desk_agents import ShopDeskAgents
+from shop_desk.fastpath import is_price_question
+from shop_desk.guardrails import escalation_reason_from_guardrail
 from shop_desk.handoff_filters import HandoffAudit
 from shop_desk.history import trim_history
+from shop_desk.orders import placed_order, record_order
 from shop_desk.schemas import EscalationReason, LineItem, Order, OrderCheck, check_order_total
 
 log = logging.getLogger(__name__)
@@ -45,7 +49,7 @@ log = logging.getLogger(__name__)
 # stops a model that loops on tools before it burns money.
 MAX_TURNS = 6
 
-TurnKind = Literal["fast-path", "reasoning", "refused", "ended"]
+TurnKind = Literal["fast-path", "reasoning", "cached", "refused", "ended"]
 
 REFUSAL = (
     "I'm sorry, I couldn't confirm that figure against our current catalogue, so I won't quote it. "
@@ -57,6 +61,11 @@ CEILING = (
 )
 CLOSED = "This conversation has ended. Please start a new chat to continue."
 TROUBLE = "Sorry, I'm having trouble reaching our system right now. Please try again in a moment."
+# XR-2: only used if the escalation agent itself fails; it is the last thing a customer sees.
+BARGAIN_REFUSAL = (
+    "Prices are fixed at what our catalogue says, so I can't change them. A member of staff will "
+    "follow up with you about the offer during opening hours."
+)
 
 
 @dataclass
@@ -146,6 +155,9 @@ class DeskSession:
         return reply
 
     async def _ask(self, text: str) -> Reply:
+        cached = self._from_cache(text)  # XR-3: no model call at all
+        if cached is not None:
+            return cached
         # FR-12: what is sent is trimmed; the basket lives in context, not in history.
         run_input = [*trim_history(self.history), {"role": "user", "content": text}]
         basket_before = dict(self.context.basket)
@@ -157,9 +169,13 @@ class DeskSession:
                 log.warning("turn %s: guardrail refused %s", self.turn, trip.guardrail_result.output.output_info)
                 self.context.basket = basket_before  # undo tool side effects before the retry
                 requoted = True
+                self.context.ledger.block(requoted=True)  # XR-4: this is the turn that costs twice
                 result = await self._requote(run_input)
+        except InputGuardrailTripwireTriggered as trip:  # XR-2, before any Desk model call
+            return await self._bargaining(trip, text)
         except OutputGuardrailTripwireTriggered:
             self.context.basket = basket_before
+            self.context.ledger.block(requoted=True)
             return self._finish_without_result(text, REFUSAL, "refused")
         except MaxTurnsExceeded:
             self.ended = True
@@ -186,6 +202,61 @@ class DeskSession:
             {"role": "assistant", "content": message},
         ]
         return Reply(message, kind=kind)
+
+    def _from_cache(self, text: str) -> Reply | None:
+        """XR-3: answer a repeated plain price question without calling the model at all.
+
+        Only reachable when `lookup_price` already answered this exact set of products against
+        these exact catalogue bytes, so the text is the tool's own current words, not a copy.
+        """
+        if not is_price_question(text):
+            return None
+        try:
+            catalogue = load_catalogue(self.context.catalogue_path)
+        except CatalogueError:
+            return None  # the normal path reports catalogue trouble in its own words
+        answer = self.context.price_cache.get(catalogue, text)
+        if answer is None:
+            return None
+        # The exchange still enters the history, so the next turn has the whole conversation.
+        self.history = [
+            *self.history,
+            {"role": "user", "content": text},
+            {"role": "assistant", "content": answer},
+        ]
+        return Reply(answer, kind="cached", model_calls=0)
+
+    async def _bargaining(self, trip: InputGuardrailTripwireTriggered, text: str) -> Reply:
+        """XR-2: the Desk model never saw this message. Hand it straight to a person."""
+        info = trip.guardrail_result.output.output_info
+        self.context.escalation = escalation_reason_from_guardrail(info)
+        log.info("turn %s: bargaining refused by the input guardrail (%s)", self.turn, info)
+        reply_text = BARGAIN_REFUSAL
+        calls = 0
+        try:
+            result = await Runner.run(
+                self.agents.escalation,
+                [{"role": "user", "content": text}],
+                context=self.context,
+                max_turns=self.max_turns,
+                hooks=self.hooks,
+                run_config=self._run_config(),
+            )
+            reply_text = str(result.final_output)
+            calls = result.context_wrapper.usage.requests
+        except (AgentsException, APIError) as exc:
+            log.warning("turn %s: escalation failed (%s)", self.turn, type(exc).__name__)
+        self.history = [
+            *self.history,
+            {"role": "user", "content": text},
+            {"role": "assistant", "content": reply_text},
+        ]
+        return Reply(
+            reply_text,
+            kind="reasoning",
+            model_calls=calls,
+            escalation=self.context.escalation,
+        )
 
     def _escalated(self, text: str, calls: int, requoted: bool) -> Reply:
         """FR-10: hand staff a typed reason and, if there is a basket, an 'escalated' order."""
@@ -238,6 +309,9 @@ class DeskSession:
             lines.append(check.note(currency))
         lines.append("A member of staff will contact you to arrange payment and delivery.")
         self.context.orders.append(order)
+        # XR-1: stored as SKUs and quantities only, so the file can never become a second source
+        # of prices. The write is best-effort and never fails the order (NFR-4).
+        record_order(placed_order(order, self.context.customer_id, self.context.now()), self.context.orders_path)
         self.context.basket.clear()
         self.context.draft_order_id = new_order_id()
         return Reply("\n".join(lines), kind="reasoning", model_calls=calls, order=order, order_check=check, requoted=requoted)

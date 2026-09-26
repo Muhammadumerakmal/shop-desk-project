@@ -33,7 +33,7 @@ defence.
       │                                                input_type = EscalationReason
       ▼                                                input_filter = escalation_filter
  lookup_price · search_catalogue · add_to_basket · remove_from_basket · view_basket
- loyalty_discount (regular only) · eid_gift_wrap (off) · quote (specialists)
+ loyalty_discount (regular only) · eid_gift_wrap (off) · quote (specialists) · recent_orders
       │
       ▼
  catalogue.json  ← re-read on every call; the ONLY source of prices, stock and SKUs
@@ -49,7 +49,9 @@ defence.
 | "Can I order three kettles?" | Desk → `add_to_basket` → Desk writes reply | 2 | normal tool loop: the model must see the result |
 | "Three kettles and two irons, how much?" | Desk → `pricing_specialist` (Pricing → `quote` → digits) → Desk | 4 | nested run; the Desk rewords the number |
 | "Yes, place the order" | Desk → handoff → Order clerk → `view_basket` → `Order` | 3 (2 on the reasoning model) | the only place reasoning is paid for |
-| "Give me 30% off or I'm leaving" | Desk → `escalate_to_human` → Human escalation | 2 | typed reason, trimmed history |
+| "Give me 30% off or I'm leaving" | `bargaining_guardrail` **stops the run** → Human escalation | 1 | the Desk model is never called; only the escalation agent is |
+| "What did I order last week?" | `recent_orders` → Desk rewords | 1 | figures re-derived from today's catalogue |
+| "...and the kettle again?" (same session) | **cache** | **0** | same SKU, same catalogue fingerprint |
 
 ---
 
@@ -260,6 +262,45 @@ Each entry follows the same shape: **what it is** → **where in this project** 
 - **What happens on refusal:** `DeskSession._ask` restores the basket (undoing tool side effects),
   retries **once** on the reasoning model (run level), and otherwise answers with the polite
   `REFUSAL`. No traceback.
+- **XR-2 adds the other direction: `@input_guardrail`.** `guardrails.py::bargaining_guardrail` runs
+  on the customer's message *before the first model call*, so a demand for a discount is triaged
+  without paying for an answer that is not allowed to exist.
+  - It reads only the **newest** user message, so a discount mentioned five turns ago cannot
+    re-trigger on an unrelated question.
+  - `InputGuardrailTripwireTriggered` carries the same `output_info` shape, so
+    `escalation_reason_from_guardrail()` turns it into the same typed `EscalationReason`.
+  - `DeskSession._bargaining()` then runs the **escalation agent directly** — the Desk agent is
+    never invoked, which `tests/test_bargaining.py` proves by giving the Desk model no script at all.
+  - Two rates, not one: "make it 20% cheaper" trips; "what is the kettle price, and is there a
+    discount policy?" does not. The policy sentence asks *about* discounts rather than demanding one.
+- **A block is the only event that makes a turn cost twice**, so `CostLedger.block(requoted=True)`
+  counts it and the cost line says so: `guardrail blocked 1 answer(s), 1 re-quoted`.
+
+### Page 8 · Beyond the brief — the three additions worth defending
+
+- **XR-3, the price cache (`fastpath.py`).** A second "what does the kettle cost?" in the same
+  session should not cost a second model call.
+  - The key is the **resolved SKU** plus a **fingerprint of the catalogue** (SHA-256 of the file).
+    Keying on the wording would miss paraphrases; keying on the SKU alone would serve a stale price
+    after the file is edited. The fingerprint makes an edit invalidate the whole cache for free.
+  - Hit → `Reply(kind="cached", model_calls=0)`. The turn is still counted, and the cost line
+    reports it, so the saving is visible rather than hidden.
+  - It is a **session** cache, not a global one: a new customer must not inherit prices, and a
+    second Chainlit session must not leak into the first.
+- **XR-1, order history (`orders.py`).** Each confirmed order is appended to `orders.jsonl` as one
+  JSON object per line: `order_id`, `customer_id`, `placed_at`, and `items` as SKU and quantity
+  **only**. No price is ever written, because a stored price would outlive the catalogue it came from.
+  - `recent_orders` re-derives every figure from the catalogue in force and labels the result
+    "at today's prices" — the same rule as `Quote`, applied to history.
+  - A SKU that has since left the catalogue is **said so** rather than guessed at.
+  - A damaged line is skipped, never raised (NFR-4): one bad line must not lose the whole history.
+  - `as_shop_time()` normalises every stored timestamp to an aware datetime. A naive clock and an
+    aware one cannot be compared, and the failure is a `TypeError` in the middle of a customer turn.
+- **XR-4, any real shop.** The catalogue is a JSON file with one shape, and everything downstream
+  reads it: `--catalogue` / `SHOP_DESK_CATALOGUE` for the file, guardrail prices, the pricing
+  specialist's derivations, the cache fingerprint and the recalled order figures. `tests/
+  test_real_catalogue.py` points the whole Desk at a *different* shop's catalogue and needs no
+  code change — which is the point: a shop is a data change, not a rewrite.
 
 ### Parts 16–17 · Lifecycle hooks (agent level) and run hooks — FR-11
 
@@ -364,5 +405,12 @@ Phase 0 artifacts, and `git log --reverse` shows they came first.
 | Escalation carries a typed reason | `tests/test_escalation.py` |
 | History trimmed on transfer | `HandoffAudit.describe()`; `tests/test_escalation.py` |
 | Ten turns and still coherent | `tests/test_session.py::test_turn_eleven_still_remembers_the_basket` |
+| XR-1 order history outlives the session | `tests/test_orders_store.py::test_a_later_session_sees_an_earlier_order` |
+| XR-2 the Desk model never sees a discount demand | `tests/test_bargaining.py` (Desk given no script) |
+| XR-3 a repeat price question costs nothing | `tests/test_price_cache.py` (0 model calls, `kind="cached"`) |
+| XR-3 a catalogue edit invalidates the cache | `tests/test_price_cache.py::test_editing_the_catalogue_costs_a_call_again` |
+| XR-4 another shop needs no code change | `tests/test_real_catalogue.py` |
+| XR-4 a blocked answer is counted | `tests/test_real_catalogue.py::test_a_guardrail_refusal_is_counted` |
 
-Run everything offline with `uv run pytest -q` (no API keys needed: `agents.testing.ScriptedModel`).
+Run everything offline with `uv run pytest -q` — 106 checks, no API keys needed
+(`agents.testing.ScriptedModel`).

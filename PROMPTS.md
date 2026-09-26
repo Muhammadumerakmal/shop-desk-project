@@ -187,6 +187,43 @@ fix it with the smallest change, add a test for it, and update specs/ first if b
 
 ---
 
+## Prompt 4b — Beyond the brief (page 8, "If you finish early")
+
+```text
+The core is done and tested. Now do the four extras on page 8 of the guide, spec first:
+amend specs/constitution.md, specs/spec.md, specs/plan.md and specs/tasks.md with XR-1..XR-4 and
+COMMIT THAT ALONE before any code. Then implement, one requirement per commit.
+
+XR-1 order history: shop_desk/orders.py writes one JSON object per line to orders.jsonl on each
+  confirmed order, holding order_id, customer_id, placed_at and items as SKU + quantity ONLY.
+  No price is ever stored, because a stored price outlives the catalogue it came from. A
+  recent_orders tool re-derives every figure from the catalogue in force and labels it
+  "at today's prices"; a SKU that has left the catalogue is said so, not guessed at; a damaged
+  line is skipped, never raised. Normalise every stored timestamp to an aware datetime.
+  Path from SHOP_DESK_ORDERS or --orders.
+
+XR-2 no bargaining: guardrails.py gets detect_bargaining() as an @input_guardrail on the Desk so the
+  Desk model is never called. Read only the NEWEST user message, or an old mention re-triggers.
+  Catch InputGuardrailTripwireTriggered in the session, set the typed "bargaining" reason and run
+  the escalation agent DIRECTLY. Move test_escalation.py's handoff turn to a complaint, because
+  bargaining no longer reaches the Desk model at all. A question ABOUT discount policy is not a
+  demand for one.
+
+XR-3 price cache: fastpath.py with a price_question() test and a session-scoped PriceCache keyed by
+  the RESOLVED SKU plus a SHA-256 fingerprint of catalogue.json. lookup_price writes; the session
+  reads and answers with kind="cached" and 0 model calls. Keying on the wording misses
+  paraphrases; keying on the SKU alone serves a stale price after the catalogue is edited. Add
+  "cached" to TurnKind and to the cost line so the saving is visible, not hidden.
+
+XR-4 any real shop: --catalogue PATH / SHOP_DESK_CATALOGUE, and guardrail_blocks + requotes on the
+  ledger, reported by cost_line() and printed at the end of every run.
+
+Tests first for each, offline via agents.testing. Update tasks.md checkboxes, README.md and
+concepts.md in the same commit as the code. Do not touch orders.jsonl into git.
+```
+
+---
+
 ## Prompt 5 — Rehearse the defence
 
 ```text
