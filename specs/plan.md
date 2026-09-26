@@ -39,9 +39,11 @@ shop_desk/
   guardrails.py           catalogue output guardrail                    FR-6
   handoff_filters.py      trimmed escalation history + audit            FR-10
   desk_agents.py          build_agents(settings): Desk, Order clerk, base + clones   FR-1, FR-3, FR-8, FR-9, FR-10
-  cost.py                 RunHooks, AgentHooks, LedgerRunner, cost line FR-11
+  cost.py                 RunHooks, AgentHooks, LedgerRunner, cost line FR-11, XR-4
   history.py              trim_history()                                FR-12
-  session.py              DeskSession.ask(): one customer turn          FR-1 run level, FR-5, FR-6, FR-8, FR-13
+  fastpath.py             price-question pattern + catalogue-keyed cache FR-3, XR-3
+  orders.py               JSONL order store, re-derived recent orders     XR-1
+  session.py              DeskSession.ask(): one customer turn          FR-1 run level, FR-5, FR-6, FR-8, FR-13, XR-2, XR-3
   cli.py                  terminal interface and scripted demo
 tests/                    one file per requirement group, offline
 specs/                    constitution, spec, plan, tasks
@@ -82,6 +84,67 @@ decorator plus explicit checks).
 | `eid_gift_wrap` | `sku: str` | — | `is_enabled=False`, off statically (FR-7) |
 | `quote` (specialist) | `lines: list[QuoteLine]` | `"TOTAL=12600"` plus a breakdown | issues a `Quote` |
 | `pricing_specialist` | `input: str` | the figure as digits, e.g. `"12600"` | `Pricing.as_tool(custom_output_extractor=…)` (FR-8) |
+| `recent_orders` | `days: int` (default 7) | one line per past order: id, age in days, lines and a re-derived total | XR-1. Reads `customer_id` through the wrapper; issues one `Quote` per order, so the guardrail needs no new rule. Never replays a stored price |
+
+## Phase 4 additions (page 8)
+
+### XR-1 — the order store
+
+`orders.jsonl` (path from `SHOP_DESK_ORDERS`, gitignored), one JSON object per line:
+
+```json
+{"order_id": "ORD-1A2B3C", "customer_id": "CUST-7781", "placed_at": "2026-09-26T14:03:00+05:00",
+ "items": [{"sku": "KTL-01", "qty": 3}]}
+```
+
+**No price is ever written.** `placed_at` and `items` only, so the file cannot become a second
+source of prices. `recent_orders` reads the lines for this `customer_id` inside the `days` window,
+rebuilds a `Quote` per order and renders the figures from `pricing.quote_figures` against the
+catalogue as it is now. Consequences, both wanted: "what did I order last week?" is answered from
+the catalogue, and editing a price changes what last week's order is said to have cost — the guardrail
+and the tool can never disagree, because it is the same `quote_figures` call. A missing file is an
+empty history, not an error. Write and read failures are logged and turned into a sentence (NFR-4).
+
+### XR-2 — the bargaining input guardrail
+
+`detect_bargaining(text) -> str | None` is a pure regex test, unit-tested on its own. Patterns are
+deliberately narrow (`\d{1,2}\s*%\s*off`, `discount|rebate|coupon|voucher`, `cheaper|lower price|best
+price|match (the|your) price|beat`, `haggl|bargain`, `give/take/knock … off`, `free (gift|delivery)`);
+"off" alone is not a trigger. `@input_guardrail` on the Desk inspects the **last user message** of
+the run input. On a tripwire `DeskSession` builds `EscalationReason(reason="bargaining", note=…)`
+from the customer's own words (cut to 120 chars) and runs `agents.escalation` directly — the Desk
+model is never called, so a haggler costs one escalation call and nothing else. The Desk's own
+`escalate_to_human` stays for `complaint`, `unavailable_item`, `customer_asked_for_human` and
+`stuck`.
+
+### XR-3 — the price cache
+
+```
+key    = (frozenset(sku for the catalogue's best matches of the subject), catalogue.fingerprint)
+value  = lookup_price's own output text
+```
+
+`Catalogue.fingerprint` is a SHA-256 of the file's bytes, computed at load. So:
+
+- `lookup_price` **writes** the entry (it already resolved the product and already has the text);
+- `DeskSession` **reads** it, but only after `price_question(text)` matches the plain-price pattern
+  *and* `catalogue.find(subject)` resolves to the same SKUs, so the cache can only ever answer a
+  question `lookup_price` had already answered;
+- a hit returns `kind="cached"`, `model_calls=0`, and appends the exchange to history so the
+  conversation stays coherent for the next turn;
+- any edit to `catalogue.json` changes the fingerprint, so every entry is stale and the repeat
+  costs 1 call again, with the new figure.
+
+The cost line counts cached turns separately, because a 0-call turn is the point.
+
+### XR-4 — a real catalogue, and the block count
+
+`Catalogue` takes a path; `ShopContext.catalogue_path` already carries it to every tool and to the
+guardrail, so `--catalogue PATH` is a one-line change in `cli.py` and nothing else. `CostLedger`
+gains `guardrail_blocks` and `requotes`, incremented by `DeskSession` at the two places that already
+handle a refusal, and reported by `cost_line()` — a block is the only event in this project that
+makes a turn cost twice, so it belongs on the cost line. The CLI prints the ledger at the end of
+every run, which is the "count how many answers the guardrail blocks" number.
 
 ## Structures crossing a boundary
 

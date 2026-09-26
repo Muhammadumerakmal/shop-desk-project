@@ -71,6 +71,18 @@ verifies it.
 3. Every requirement has an automated check in `tests/` that runs without API keys, plus a live
    demonstration path (`python -m shop_desk.cli`).
 
+## Article 8 — Beyond the brief (XR-1…XR-4)
+
+1. **A stored order stores SKUs and quantities, never prices.** Every figure shown about a past
+   order is re-derived from the current catalogue through `pricing.quote_figures`. `orders.jsonl`
+   must never become a second source of prices.
+2. **A cache may only answer a question a tool already answered for the same catalogue bytes.** The
+   key carries a fingerprint of `catalogue.json`; editing the file invalidates every entry.
+3. **The customer is never billed twice for a refusal.** An input guardrail that routes bargaining
+   to escalation must run *before* the Desk model, not after it.
+4. **Any catalogue in the documented shape works.** The Desk reads products, prices, stock and SKUs
+   from a path, never from a hard-coded product.
+
 ## Boundaries
 
 | Always | Ask first | Never |
@@ -79,3 +91,5 @@ verifies it.
 | Name the FR a change serves in the commit | Changing the model defaults | Let a tool raise |
 | Keep prices, stock and SKUs flowing from tools | Changing `MAX_TURNS` or history size | Put a price, SKU or customer id in a prompt |
 | Update `spec.md` before changing behaviour | Changing the Order schema | Trust a model-computed total |
+| Re-derive a stored figure from the file | Changing the catalogue's JSON shape | Store a price with an order |
+| Invalidate the cache when the file changes | Serving a cache entry from another catalogue | Run the Desk model after a guardrail already refused |

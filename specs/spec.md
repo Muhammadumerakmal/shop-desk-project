@@ -141,6 +141,46 @@ trace, with one span per customer turn labelled `fast-path` or `reasoning`.
 *Accept:* the trace opens on the platform, and fast-path turns, reasoning turns and the most
 expensive turn (the cost line names it too) can be pointed to.
 
+### Phase 4 — beyond the brief (page 8, "If you finish early")
+
+The brief's four closing suggestions, taken as requirements. Same rules as the rest: numbered,
+testable, and checked offline.
+
+**XR-1 — Persist orders, and answer "what did I order last week?".**
+A confirmed order is appended to a JSONL store keyed by `customer_id`, with the timestamp and the
+line items as **SKUs and quantities, never prices**. A `recent_orders(days)` tool re-derives every
+figure from the *current* `catalogue.json` and issues a `Quote` per order, so the guardrail backs
+the answer with no new rule (NFR-3 holds: a stored price is never trusted, a re-derived one is).
+*Accept:* an order placed in session one is visible in a later session for the same `customer_id`,
+the tool shows the age in days, and a price edited in the catalogue changes what "last week" costs
+rather than replaying the old number. A store that cannot be read or written returns a sentence.
+
+**XR-2 — An input guardrail that refuses bargaining and routes it to escalation.**
+An `input_guardrail` on the Desk reads the customer's own words before the model is called. On
+bargaining language (`\d+% off`, discount/rebate/coupon, "cheaper", "match the price", haggling) it
+trips the wire with a typed `EscalationReason(reason="bargaining")`. The session catches the
+tripwire and runs the **Human escalation** agent directly, so a haggler costs zero Desk calls.
+*Accept:* a bargaining message never reaches the Desk model; the reply is the escalation agent's,
+the reason is the enum value `bargaining`, and ordinary messages ("is it in stock?", "what are your
+opening hours?") pass through untouched. The Desk keeps `escalate_to_human` for the other four
+reasons.
+
+**XR-3 — A cache so a repeated price question costs nothing at all.**
+`lookup_price` stores its own output under a key of the **resolved SKUs plus a fingerprint of the
+catalogue file's bytes**. `DeskSession` recognises a plain price question by pattern, resolves it
+against the catalogue and, on a hit, answers from the cache **without running the model at all**.
+Editing the catalogue changes the fingerprint and invalidates every entry.
+*Accept:* the first kettle question costs 1 call, the repeat costs **0**, the cost line reports the
+cached turn separately, and editing a price in `catalogue.json` makes the next repeat cost 1 call
+again with the new figure. A question that is not a plain price question is never served from cache.
+
+**XR-4 — A real catalogue, and a count of what the guardrail blocks.**
+`--catalogue PATH` (or `SHOP_DESK_CATALOGUE`) points the whole Desk at another shop's
+`catalogue.json` in the same shape. The ledger counts every guardrail refusal and every re-quote,
+and the cost line reports them, because a blocked answer is the one that costs **twice**.
+*Accept:* the Desk runs against a second catalogue file with no code change, and after any
+conversation the CLI prints how many answers the guardrail blocked and how many were re-quoted.
+
 ## Non-functional requirements
 
 - **NFR-1 Secrets.** Keys in `.env`, gitignored, never printed. A missing key fails at startup
@@ -176,8 +216,12 @@ expensive turn (the cost line names it too) can be pointed to.
 | Escalation carries a typed reason | `tests/test_escalation.py` |
 | History is trimmed on transfer | `tests/test_escalation.py` (before/after counts) |
 | Ten turns and still coherent | `tests/test_session.py` (turn 11 remembers the basket) |
+| Orders persist and can be recalled | `tests/test_orders_store.py` (placed in one session, seen in the next) |
+| Bargaining never reaches the Desk model | `tests/test_bargaining.py` (Desk call count unchanged) |
+| A repeated price question costs 0 calls | `tests/test_price_cache.py` (1 then 0, then 1 after a price edit) |
+| Any catalogue can be used | `tests/test_real_catalogue.py` (second file, no code change) + `--catalogue` |
 
 ## Open questions
 
 - Which Gemini model names are current for the grader's account. Both are env-configurable.
-- Whether orders should persist across sessions (listed under "if you finish early").
+- Whether the order store should grow beyond one JSONL file. Fine as a file for one shop.

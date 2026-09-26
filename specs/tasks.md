@@ -55,13 +55,35 @@ Ordered by dependency. Each task is independently verifiable and names the requi
 - [x] **T19** `cli --demo`: scripted 13-turn conversation with one order and one escalation.
   - Serves: Demo · Verify: **live** `uv run python -m shop_desk.cli --demo`
 
+## Phase 4 — beyond the brief (page 8, "If you finish early")
+
+- [ ] **T20** `orders.py`: JSONL store (`PlacedOrder`, `record_order`, `recent_orders`), storing SKUs
+  and quantities only. `recent_orders` tool re-derives every figure and issues a `Quote` per order.
+  Session records each confirmed order. Desk instructions gain the tool.
+  - Serves: XR-1 · Verify: `pytest tests/test_orders_store.py`
+- [ ] **T21** `detect_bargaining()` + `bargaining_guardrail` as an **input** guardrail on the Desk.
+  Session catches `InputGuardrailTripwireTriggered`, sets a typed `bargaining` reason and runs the
+  escalation agent directly. `test_escalation.py` switches its handoff turn to a complaint, since
+  bargaining no longer reaches the Desk model.
+  - Serves: XR-2 · Verify: `pytest tests/test_bargaining.py`
+- [ ] **T22** `fastpath.py`: `price_question()`, `PriceCache` keyed by resolved SKUs + catalogue
+  fingerprint. `lookup_price` writes; `DeskSession` reads and answers at 0 model calls with
+  `kind="cached"`. `Catalogue.fingerprint` added; `TurnKind` and the cost line learn "cached".
+  - Serves: XR-3 · Verify: `pytest tests/test_price_cache.py`
+- [ ] **T23** `--catalogue PATH` / `SHOP_DESK_CATALOGUE` in the CLI, and `guardrail_blocks` +
+  `requotes` on the ledger, reported by `cost_line()` and printed at the end of every CLI run.
+  - Serves: XR-4 · Verify: `pytest tests/test_real_catalogue.py`, **live** `cli --demo --catalogue mine.json`
+
 ## Cut list (in this order)
 
 FR-11 → FR-9 → the agent-level hooks inside FR-11. Never cut FR-3 or FR-6.
 
 ## Status
 
-All tasks are implemented and their offline checks pass (`uv run pytest -q`, 61 tests). The
+Phases 0–3 are implemented and their offline checks pass (`uv run pytest -q`). The
 **live** checks (T17 two browser windows over 11 turns, T18 opening the trace on the platform, T19
 the demo against real Gemini models) need real keys in `.env`. They are still to be run by the
 developer before the demo.
+
+Phase 4 (T20–T23) takes the brief's four "if you finish early" suggestions as requirements; the
+spec was amended and committed before any of that code was written.
