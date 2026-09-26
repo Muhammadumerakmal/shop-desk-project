@@ -6,7 +6,7 @@
 |---|---|
 | Language | Python 3.12 (managed by `uv`) |
 | Agent framework | `openai-agents` 0.22.x (OpenAI Agents SDK) |
-| Model provider | Gemini, OpenAI-compatible endpoint `https://generativelanguage.googleapis.com/v1beta/openai/`, Chat Completions API |
+| Model provider | OpenAI, Chat Completions API, no `base_url` override (`gpt-4.1-mini` default, `gpt-4.1` reasoning) |
 | Structured data | `pydantic` v2 models, `dataclasses` for context |
 | UI | `chainlit` 2.x |
 | Config | `python-dotenv` |
@@ -16,7 +16,7 @@
 
 ```
 uv sync                                   # install
-cp .env.example .env                      # then add GEMINI_API_KEY, OPENAI_API_KEY
+cp .env.example .env                      # then add OPENAI_API_KEY
 uv run pytest -q                          # all offline checks
 uv run python -m shop_desk.cli            # terminal desk (walk_in, live clock)
 uv run python -m shop_desk.cli --tier regular --hour 22 --show-prompt
@@ -229,12 +229,12 @@ so every run of the conversation attaches to one trace. It is finished when the 
 
 | Level | Where | What |
 |---|---|---|
-| Global | `config.configure_global()` | `set_default_openai_client(gemini, use_for_tracing=False)`, `set_default_openai_api("chat_completions")`, `OPENAI_DEFAULT_MODEL=FAST_MODEL` |
+| Global | `config.configure_global()` | `set_default_openai_client(openai, use_for_tracing=False)`, `set_default_openai_api("chat_completions")`, `OPENAI_DEFAULT_MODEL=FAST_MODEL` |
 | Agent | `desk_agents.build_agents()` | `Order clerk: model=settings.reasoning_model` |
 | Run | `session.DeskSession._requote()` | `RunConfig(model=settings.reasoning_model)` |
 
 Deleting the global default makes `Desk` and the clones resolve the SDK's built-in default name,
-which the Gemini endpoint does not serve. That is the only behaviour that changes.
+which this project never intends to serve. That is the only behaviour that changes.
 
 ## Testing strategy
 
@@ -265,7 +265,7 @@ module docstring naming the FRs a file serves, and no print outside `cli.py` and
 
 | Risk | Mitigation |
 |---|---|
-| Gemini compat endpoint rejects a parameter (strict schema, `parallel_tool_calls`) | Only use temperature/max_tokens; keep `Order` schema flat |
+| A chosen model rejects a parameter this project sends (`temperature`, `max_tokens`) | Pick a pair that accepts both; `gpt-5.x` reasoning models are ruled out for exactly this reason. Keep the `Order` schema flat |
 | Model repeats an old total from history, so the guardrail trips | Desk instructions: always re-fetch figures; re-quote path retries |
 | Model calls `lookup_price` for a non-price question | Tool description scoped to "only the price/stock of one product" |
 | Trace export fails without an OpenAI key | Missing `OPENAI_API_KEY` fails at startup unless `SHOP_DESK_TRACING=off` |

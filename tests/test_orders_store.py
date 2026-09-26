@@ -109,7 +109,7 @@ def make_session_with_store(make_context, provider, store):
     from shop_desk.desk_agents import build_agents
     from shop_desk.session import DeskSession
 
-    settings = Settings(fast_model=FAST, reasoning_model=REASONING, tracing=False, gemini_api_key="k")
+    settings = Settings(fast_model=FAST, reasoning_model=REASONING, tracing=False, api_key="k")
     configure_global(settings)
     context = make_context("walk_in", "CUST-7781", orders_path=store, clock=fixed_clock(14))
     return DeskSession(build_agents(settings), context, settings, model_provider=provider)

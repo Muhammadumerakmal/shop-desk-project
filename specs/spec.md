@@ -22,15 +22,15 @@ one trace with a per-turn cost line.
 
 ## Assumptions
 
-1. The model provider is **Gemini through its OpenAI-compatible endpoint**, using the
-   Chat Completions API. Traces are exported to the OpenAI platform under the developer's own
-   `OPENAI_API_KEY`.
+1. The model provider is **OpenAI**, using the Chat Completions API. One `OPENAI_API_KEY` serves
+   both the model calls and the trace export to the OpenAI platform.
 2. The shop runs on Pakistan time (UTC+5, no DST). It is open **10:00–21:00**, and same-day
    delivery is offered for orders confirmed before **17:00**.
 3. Regular customers get a fixed **5 % loyalty discount**, available only through a tool.
 4. Orders live in the session (in memory). Payment and delivery addresses are out of scope.
-5. Model names are configuration (`FAST_MODEL`, `REASONING_MODEL`) so that newer Gemini
-   releases can be swapped in without code changes.
+5. Model names are configuration (`FAST_MODEL`, `REASONING_MODEL`) so that newer OpenAI
+   releases can be swapped in without code changes. The pair must accept `temperature` and
+   `max_tokens`, which every agent here sends.
 
 ## Behaviour — functional requirements
 
@@ -223,5 +223,7 @@ conversation the CLI prints how many answers the guardrail blocked and how many 
 
 ## Open questions
 
-- Which Gemini model names are current for the grader's account. Both are env-configurable.
+- Which OpenAI model names are current and cheap enough for the grader's account. Both are
+  env-configurable. `gpt-5.x`-style reasoning models are ruled out: they reject `temperature`
+  values other than 1 and require `max_completion_tokens` instead of `max_tokens`.
 - Whether the order store should grow beyond one JSONL file. Fine as a file for one shop.

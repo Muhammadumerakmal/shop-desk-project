@@ -1,7 +1,7 @@
 [project]
 name = "shop-desk"
 version = "0.1.0"
-description = "Spec-driven customer desk for a small shop, built on the OpenAI Agents SDK with Gemini."
+description = "Spec-driven customer desk for a small shop, built on the OpenAI Agents SDK with OpenAI models."
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
 dependencies = [

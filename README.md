@@ -1,7 +1,7 @@
 ﻿# Shop Desk
 
 A spec-driven customer desk for a small shop (**Al-Noor Electronics**, prices in PKR), built on the
-**OpenAI Agents SDK** with **Gemini** models and a **Chainlit** UI. It answers what's in stock and what it
+**OpenAI Agents SDK** with **OpenAI** models and a **Chainlit** UI. It answers what's in stock and what it
 costs, builds a **typed order** when the customer confirms, and hands genuinely stuck conversations to a
 human, **without wasting money**:
 
@@ -23,7 +23,7 @@ human, **without wasting money**:
 
 ```bash
 uv sync
-cp .env.example .env          # add GEMINI_API_KEY and OPENAI_API_KEY (for traces)
+cp .env.example .env          # add OPENAI_API_KEY (model calls and traces)
 uv run pytest -q              # 106 offline checks, no keys needed
 uv run chainlit run app.py -w # browser UI
 ```
@@ -44,11 +44,10 @@ REPL commands: `/basket`, `/cost`, `/prompt`, `/quit`.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `GEMINI_API_KEY` | required | model calls (Gemini OpenAI-compatible endpoint) |
-| `OPENAI_API_KEY` | required unless tracing is off | trace export to platform.openai.com |
+| `OPENAI_API_KEY` | required | model calls **and** trace export to platform.openai.com |
 | `SHOP_DESK_TRACING` | `on` | `off` runs without tracing |
-| `FAST_MODEL` | `gemini-2.5-flash` | process default (global level) |
-| `REASONING_MODEL` | `gemini-2.5-pro` | Order clerk (agent level) and re-quote (run level) |
+| `FAST_MODEL` | `gpt-4.1-mini` | process default (global level) |
+| `REASONING_MODEL` | `gpt-4.1` | Order clerk (agent level) and re-quote (run level) |
 | `SHOP_DESK_CATALOGUE` | `catalogue.json` | the one source of products (also `--catalogue`) |
 | `SHOP_DESK_ORDERS` | `orders.jsonl` | placed-order history (also `--orders`) |
 

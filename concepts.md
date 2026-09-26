@@ -5,8 +5,8 @@ concept-coverage table) to the exact place it lives in this codebase, and explai
 there. Read it top to bottom once. After that, use it to answer "where is X and why?" during a
 defence.
 
-> SDK version: `openai-agents` 0.22.x · Model provider: Gemini via its OpenAI-compatible endpoint
-> · UI: Chainlit 2.x. Spec artifacts live in [`specs/`](specs/).
+> SDK version: `openai-agents` 0.22.x · Model provider: OpenAI (`gpt-4.1-mini` cheap default,
+> `gpt-4.1` reasoning override) · UI: Chainlit 2.x. Spec artifacts live in [`specs/`](specs/).
 
 ---
 
@@ -60,18 +60,19 @@ defence.
 Each entry follows the same shape: **what it is** → **where in this project** → **why here** →
 **gotcha**.
 
-### Parts 0–2 · Setup, keys, Gemini — FR-1, NFR-1
+### Parts 0–2 · Setup, keys, the model provider — FR-1, NFR-1
 
-- **What:** the SDK talks to any OpenAI-compatible endpoint. Gemini exposes one at
-  `https://generativelanguage.googleapis.com/v1beta/openai/` and speaks the *Chat Completions* API,
-  not the Responses API.
+- **What:** the SDK talks to any OpenAI-compatible endpoint through the *Chat Completions* API.
+  This project uses OpenAI directly, so `AsyncOpenAI` is built with no `base_url` override.
 - **Where:** `shop_desk/config.py`: `load_settings()`, `configure_global()`, `StartupError`.
   Keys come from `.env` (template: `.env.example`, gitignored).
 - **Why:** NFR-1 says a missing key fails **at startup with one sentence**. `load_settings()`
-  raises `StartupError("GEMINI_API_KEY is missing: copy .env.example to .env …")`. `cli.py` and
-  `app.py` print it and stop. `Settings` marks keys `repr=False`, so they never appear in logs.
-- **Gotcha:** `set_default_openai_client(client, use_for_tracing=False)`. Without `False`, the SDK
-  would send your **Gemini** key to the **OpenAI** trace exporter.
+  raises `StartupError("OPENAI_API_KEY is missing: copy .env.example to .env …")`. `cli.py` and
+  `app.py` print it and stop. `Settings` marks the key `repr=False`, so it never appears in logs.
+- **Gotcha:** one key now serves both jobs — model calls and trace export — so there is no second
+  secret to keep in sync. `set_default_openai_client(client, use_for_tracing=False)` still says
+  `False` and tracing goes out through `set_tracing_export_api_key()` instead, which keeps the
+  export path explicit rather than implicit.
 
 ### Part 3 · Runner and asyncio — FR-1, FR-12
 
@@ -96,7 +97,7 @@ Each entry follows the same shape: **what it is** → **where in this project** 
 - **Precedence** (SDK `get_model()`): `RunConfig.model` > `agent.model` > the global default. So the
   re-quote run overrides even the Order clerk for that single run.
 - **Delete-the-global-default experiment:** agents with no `model=` (Desk, specialists) fall back
-  to the SDK's built-in default name, which the Gemini endpoint does not serve. That is the one
+  to the SDK's built-in default name, which this project never intends to serve. That is the one
   behaviour that changes. The Order clerk and the re-quote path are unaffected.
   (`tests/test_model_levels.py::test_deleting_global_default_changes_only_the_default_resolution`)
 - **Gotcha:** set the global default **before** building agents. `Agent.model_settings` is
@@ -322,8 +323,10 @@ Each entry follows the same shape: **what it is** → **where in this project** 
 - **Gotcha that shaped the design:** a nested agent-as-tool run **shares the parent's `Usage`
   object**. The runner records each run's *delta*, and turn totals sum only depth-0 runs. Otherwise
   the Pricing specialist's tokens would be counted twice.
-- **Cost line** (format; the numbers here are illustrative): `Cost · 5 turn(s): 2 fast-path, 3 reasoning · 11 model call(s) · 9,812 in / 604 out
-  tokens · models: gemini-2.5-flash ×9, gemini-2.5-pro ×2 · most expensive: turn 4 (3,120 tokens)`.
+- **Cost line** (real output of `uv run python -m shop_desk.cli --demo`, 15 turns):
+  `Cost · 15 turn(s): 4 fast-path, 11 reasoning · 28 model call(s) · 31,406 in / 681 out
+  tokens · models: gpt-4.1-mini ×27, gpt-4.1 ×1 · most expensive: turn 6 (4,098 tokens)`.
+  The reasoning model is entered exactly once, by the Order clerk on the confirming turn.
 
 ### Part 19 · Chainlit — FR-12
 

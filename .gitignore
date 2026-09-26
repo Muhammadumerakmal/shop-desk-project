@@ -14,6 +14,8 @@ __pycache__/
 # chainlit runtime
 .chainlit/translations/
 .files/
+# chainlit regenerates its own boilerplate next to the module that imports it
+shop_desk/.chainlit/
 
 # editors / os
 .vscode/

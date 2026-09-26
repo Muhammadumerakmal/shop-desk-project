@@ -53,7 +53,7 @@ class ScriptedProvider(ModelProvider):
 @pytest.fixture
 def settings(monkeypatch) -> Settings:
     monkeypatch.setenv(DEFAULT_MODEL_ENV, "placeholder")  # restored after the test
-    s = Settings(fast_model=FAST, reasoning_model=REASONING, tracing=False, gemini_api_key="test-key")
+    s = Settings(fast_model=FAST, reasoning_model=REASONING, tracing=False, api_key="test-key")
     configure_global(s)  # the real global level, pointed at the fake names
     set_tracing_disabled(True)
     return s

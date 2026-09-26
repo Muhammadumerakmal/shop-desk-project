@@ -12,7 +12,7 @@ Ordered by dependency. Each task is independently verifiable and names the requi
 
 - [x] **T01** Project skeleton: `pyproject.toml`, `.env.example`, `catalogue.json` (8 products, at least one out of stock).
   - Serves: FR-1, NFR-1 Â· Verify: `uv sync` succeeds
-- [x] **T02** `config.py`: `Settings`, `load_settings()` raising `StartupError` with one sentence per missing key, `configure_global()` setting the Gemini client, the chat-completions API, the default model and the tracing key.
+- [x] **T02** `config.py`: `Settings`, `load_settings()` raising `StartupError` with one sentence per missing key, `configure_global()` setting the OpenAI client, the chat-completions API, the default model and the tracing key.
   - Serves: FR-1 (global), NFR-1, FR-13 Â· Verify: `pytest tests/test_config.py`
 - [x] **T03** `catalogue.py`: `load_catalogue()` (reads the file every call), `find()`, `money()`.
   - Serves: FR-1 Â· Verify: `pytest tests/test_catalogue.py`
@@ -85,7 +85,8 @@ FR-11 â†’ FR-9 â†’ the agent-level hooks inside FR-11. Never cut FR-3 
 
 Phases 0â€“3 are implemented and their offline checks pass (`uv run pytest -q`). The
 **live** checks (T17 two browser windows over 11 turns, T18 opening the trace on the platform, T19
-the demo against real Gemini models) need real keys in `.env`. They are still to be run by the
+the demo against real OpenAI models) need a real `OPENAI_API_KEY` in `.env`. T19 has been run
+against `gpt-4.1-mini` / `gpt-4.1` and passes; T17 and T18 are still to be run by the
 developer before the demo.
 
 Phase 4 (T20â€“T23) takes the brief's four "if you finish early" suggestions as requirements; the

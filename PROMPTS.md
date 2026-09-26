@@ -23,13 +23,13 @@ Read the whole PDF first. Do NOT create any source file (.py, pyproject, app) in
 Create exactly four files under specs/ and nothing else (plus a .gitignore that ignores .env):
 
 1. specs/constitution.md — rules the build may not break, each one checkable:
-   - the process default model is the cheap model (FAST_MODEL, gemini-2.5-flash), set globally;
+   - the process default model is the cheap model (FAST_MODEL, gpt-4.1-mini), set globally;
      only the Order clerk (agent level) and a re-quote path (run level) may use REASONING_MODEL;
    - a quoted price, stock figure or SKU must come from catalogue.json this run;
    - secrets live only in .env, never printed; a missing key fails at startup with one sentence;
    - no tool raises into the runner: tools return sentences;
    - Always / Ask first / Never boundaries.
-2. specs/spec.md — behaviour: objective, assumptions (Gemini via OpenAI-compatible endpoint, PKT
+2. specs/spec.md — behaviour: objective, assumptions (OpenAI models, PKT
    hours 10:00–21:00, same-day cutoff 17:00, 5% loyalty rate for regular tier), FR-1..FR-13 and
    NFR-1..NFR-5 in my own words with an "Accept:" line each, the three things the Desk deliberately
    will NOT do (bargain/invent discounts, take payment or personal details, discuss anything outside
@@ -60,9 +60,9 @@ openai-agents, pydantic, python-dotenv, pytest + pytest-asyncio.
 
 - T01 pyproject.toml, .env.example (placeholders only), catalogue.json (8 products, KTL-01 kettle
   4200 stock 12 and FAN-22 pedestal fan 9800 stock 0 included).
-- T02 shop_desk/config.py: Settings (keys repr=False), load_settings() raising StartupError with
-  ONE sentence per missing key, configure_global(): AsyncOpenAI pointed at Gemini,
-  set_default_openai_client(client, use_for_tracing=False), set_default_openai_api("chat_completions"),
+- T02 shop_desk/config.py: Settings (the key repr=False), load_settings() raising StartupError with
+  ONE sentence per missing key, configure_global(): AsyncOpenAI on OpenAI's own endpoint (no
+  base_url override), set_default_openai_client(client, use_for_tracing=False), set_default_openai_api("chat_completions"),
   OPENAI_DEFAULT_MODEL=FAST_MODEL (this is the GLOBAL level of FR-1), tracing key.
 - T03 shop_desk/catalogue.py: load_catalogue() re-reads the file on every call; find(); money().
 - T04 shop_desk/context.py: ShopContext dataclass (shop, currency, customer_id, tier + basket,
@@ -181,7 +181,7 @@ With my real keys in .env, run `uv run python -m shop_desk.cli --demo` and then
 2. Name the most expensive turn and why it was expensive.
 3. Show the escalation's typed reason and the handoff before/after counts.
 4. Show that turn 11 still knew the basket.
-If any live behaviour differs from the offline tests (for example a Gemini parameter rejected),
+If any live behaviour differs from the offline tests (for example a model parameter rejected),
 fix it with the smallest change, add a test for it, and update specs/ first if behaviour changes.
 ```
 

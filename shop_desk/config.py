@@ -21,9 +21,8 @@ from agents.run import set_default_agent_runner
 
 from shop_desk.cost import LedgerRunner
 
-GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
-DEFAULT_FAST_MODEL = "gemini-2.5-flash"
-DEFAULT_REASONING_MODEL = "gemini-2.5-pro"
+DEFAULT_FAST_MODEL = "gpt-4.1-mini"
+DEFAULT_REASONING_MODEL = "gpt-4.1"
 
 # The SDK resolves an agent with no model through this variable at run time.
 DEFAULT_MODEL_ENV = "OPENAI_DEFAULT_MODEL"
@@ -38,41 +37,35 @@ class Settings:
     fast_model: str
     reasoning_model: str
     tracing: bool
-    base_url: str = GEMINI_BASE_URL
-    # repr=False keeps keys out of logs, tracebacks and debug prints (NFR-1).
-    gemini_api_key: str = field(default="", repr=False)
-    openai_api_key: str | None = field(default=None, repr=False)
+    # None means OpenAI's own endpoint; a base_url is only set to point the SDK elsewhere.
+    base_url: str | None = None
+    # repr=False keeps the key out of logs, tracebacks and debug prints (NFR-1).
+    api_key: str = field(default="", repr=False)
 
 
 def _is_placeholder(value: str | None) -> bool:
     return not value or value.strip() == "" or value.startswith("your-")
 
-
 def load_settings(env_file: str | None = ".env") -> Settings:
     """Read settings from .env / the environment; raise StartupError on a missing key."""
+
     if env_file:
         load_dotenv(env_file, override=False)
 
-    gemini_key = os.getenv("GEMINI_API_KEY")
-    if _is_placeholder(gemini_key):
+    api_key = os.getenv("OPENAI_API_KEY")
+    if _is_placeholder(api_key):
         raise StartupError(
-            "GEMINI_API_KEY is missing: copy .env.example to .env and put your Gemini key there."
+            "OPENAI_API_KEY is missing: copy .env.example to .env and put your OpenAI key there."
         )
 
     tracing = os.getenv("SHOP_DESK_TRACING", "on").strip().lower() not in {"off", "0", "false", "no"}
-    openai_key = os.getenv("OPENAI_API_KEY")
-    if tracing and _is_placeholder(openai_key):
-        raise StartupError(
-            "OPENAI_API_KEY is missing: add it to .env to export traces, "
-            "or set SHOP_DESK_TRACING=off to run without tracing."
-        )
 
     return Settings(
         fast_model=os.getenv("FAST_MODEL", DEFAULT_FAST_MODEL).strip(),
         reasoning_model=os.getenv("REASONING_MODEL", DEFAULT_REASONING_MODEL).strip(),
         tracing=tracing,
-        gemini_api_key=gemini_key.strip(),
-        openai_api_key=openai_key.strip() if tracing and openai_key else None,
+        # One key serves both jobs: model calls and trace export.
+        api_key=api_key.strip(),
     )
 
 
@@ -82,8 +75,7 @@ def configure_global(settings: Settings) -> None:
     Must run before any agent is built: the SDK derives an agent's default ModelSettings
     from the default model name at construction time.
     """
-    client = AsyncOpenAI(api_key=settings.gemini_api_key, base_url=settings.base_url)
-    # Gemini's key must never be sent to the OpenAI trace exporter.
+    client = AsyncOpenAI(api_key=settings.api_key, base_url=settings.base_url)
     set_default_openai_client(client, use_for_tracing=False)
     set_default_openai_api("chat_completions")
     os.environ[DEFAULT_MODEL_ENV] = settings.fast_model  # the global default model
@@ -91,8 +83,8 @@ def configure_global(settings: Settings) -> None:
     # FR-11: every Runner.run in the process, nested ones included, goes through the ledger.
     set_default_agent_runner(LedgerRunner())
 
-    if settings.tracing and settings.openai_api_key:
-        set_tracing_export_api_key(settings.openai_api_key)
+    if settings.tracing and settings.api_key:
+        set_tracing_export_api_key(settings.api_key)
         set_tracing_disabled(False)
     else:
         set_tracing_disabled(True)

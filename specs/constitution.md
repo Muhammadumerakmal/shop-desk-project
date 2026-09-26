@@ -6,11 +6,11 @@ verifies it.
 
 ## Article 1 — Models and who may override them (FR-1, NFR-2)
 
-1. The **process default is the cheap model** (`FAST_MODEL`, default `gemini-2.5-flash`). It is
+1. The **process default is the cheap model** (`FAST_MODEL`, default `gpt-4.1-mini`). It is
    set **once, globally**, in `shop_desk/config.py::configure_global()`. No other file sets a
    process-wide model.
 2. Exactly **two** places may run the reasoning model (`REASONING_MODEL`, default
-   `gemini-2.5-pro`):
+   `gpt-4.1`):
    - **Agent level:** the *Order clerk* sets `model=` on itself, because turning a basket into a
      typed, priced order is the one job that needs reasoning.
    - **Run level:** the *re-quote path* passes `RunConfig(model=REASONING_MODEL)` for a single
@@ -33,8 +33,8 @@ verifies it.
 
 ## Article 3 — Secrets live only in `.env` (NFR-1)
 
-1. `GEMINI_API_KEY` (model calls) and `OPENAI_API_KEY` (trace export) are read from `.env` or the
-   environment. `.env` is gitignored and `.env.example` holds placeholders only.
+1. `OPENAI_API_KEY` is read from `.env` or the environment, and it serves both jobs: model calls
+   and trace export. `.env` is gitignored and `.env.example` holds placeholders only.
 2. Keys are never printed, logged, put in a prompt, or put in a trace. `Settings.__repr__` masks
    them.
 3. A missing key stops the program **at startup, with one plain sentence** that says which key is
