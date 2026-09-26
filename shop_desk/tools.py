@@ -10,10 +10,12 @@ import functools
 import logging
 from typing import Callable
 
-from agents import RunContextWrapper, function_tool
+from agents import AgentBase, RunContextWrapper, function_tool
 
 from shop_desk.catalogue import CatalogueError, load_catalogue
 from shop_desk.context import Quote, ShopContext
+from shop_desk.pricing import LOYALTY_RATE, quote_figures
+from shop_desk.schemas import QuoteLine
 
 log = logging.getLogger(__name__)
 
@@ -141,24 +143,98 @@ def view_basket(ctx: RunContextWrapper[ShopContext]) -> str:
     basket = ctx.context.basket
     if not basket:
         return "The basket is empty."
-    rows, total, quote_lines = [], 0.0, []
+    rows, quote_lines = [], []
     for sku, qty in basket.items():
         product = catalogue.get(sku)
         if product is None:
             rows.append(f"{sku}: no longer in the catalogue, remove it before ordering")
             continue
-        line_total = product.price * qty
-        total += line_total
         quote_lines.append((sku, qty))
         stock_note = "" if qty <= product.stock else f" (only {product.stock} in stock now)"
         rows.append(
             f"{sku} · {product.name} · {qty} × {catalogue.money(product.price)} = "
-            f"{catalogue.money(line_total)}{stock_note}"
+            f"{catalogue.money(product.price * qty)}{stock_note}"
         )
-    ctx.context.issued_quotes.append(Quote(lines=tuple(quote_lines)))
-    rows.append(f"Total: {catalogue.money(total)}")
+    quote = Quote(lines=tuple(quote_lines))
+    ctx.context.issued_quotes.append(quote)
+    rows.append(f"Total: {catalogue.money(quote_figures(quote, catalogue).total)}")
     rows.append(f"Draft order id: {ctx.context.draft_order_id}")
     return "\n".join(rows)
 
 
-DESK_TOOLS = [lookup_price, search_catalogue, add_to_basket, remove_from_basket, view_basket]
+# --- FR-7: a tool that is earned, and a tool that is off -------------------------------------
+
+def is_regular_customer(ctx: RunContextWrapper[ShopContext], agent: AgentBase) -> bool:
+    """Evaluated every run: the tool is only offered to regular customers."""
+    return ctx.context.tier == "regular"
+
+
+@function_tool(is_enabled=is_regular_customer)
+@never_raises
+def loyalty_discount(ctx: RunContextWrapper[ShopContext], sku: str, qty: int) -> str:
+    """The regular-customer price (5% loyalty discount) for a quantity of one SKU.
+
+    Args:
+        sku: the catalogue SKU.
+        qty: number of units, at least 1.
+    """
+    if ctx.context.tier != "regular":  # defence in depth; the schema already hides this tool
+        return "Loyalty pricing is only available to regular customers."
+    catalogue = _catalogue(ctx)
+    product = catalogue.get(sku)
+    if product is None:
+        return f"There is no product with SKU {sku!r}."
+    if qty < 1:
+        return "The quantity must be at least 1."
+    quote = Quote(lines=((product.sku, qty),), discount_rate=LOYALTY_RATE)
+    ctx.context.issued_quotes.append(quote)
+    figures = quote_figures(quote, catalogue)
+    return (
+        f"Regular-customer price for {qty} × {product.name} ({product.sku}): "
+        f"{catalogue.money(figures.total)} (5% off {catalogue.money(figures.subtotal)}, "
+        f"saving {catalogue.money(figures.discount)})."
+    )
+
+
+SEASONAL_TOOLS_ENABLED = False  # Eid season is over: switched off statically
+
+
+@function_tool(is_enabled=SEASONAL_TOOLS_ENABLED)
+@never_raises
+def eid_gift_wrap(ctx: RunContextWrapper[ShopContext], sku: str) -> str:
+    """Add free Eid gift wrapping to a basket item (seasonal service).
+
+    Args:
+        sku: the basket SKU to gift wrap.
+    """
+    return f"{sku} will be gift wrapped for Eid."
+
+
+# --- FR-8: the specialist's arithmetic tool ---------------------------------------------------
+
+@function_tool
+@never_raises
+def quote(ctx: RunContextWrapper[ShopContext], lines: list[QuoteLine]) -> str:
+    """Exact total for quantities of catalogue SKUs, computed from current catalogue prices.
+
+    Args:
+        lines: the SKUs and quantities to price.
+    """
+    catalogue = _catalogue(ctx)
+    bad = [line.sku for line in lines if catalogue.get(line.sku) is None]
+    if bad:
+        return f"Unknown SKU(s): {', '.join(bad)}. Use search_catalogue to find the right SKU."
+    if not lines or any(line.qty < 1 for line in lines):
+        return "Every line needs a quantity of at least 1."
+    q = Quote(lines=tuple((catalogue.get(line.sku).sku, line.qty) for line in lines))
+    ctx.context.issued_quotes.append(q)
+    figures = quote_figures(q, catalogue)
+    breakdown = "; ".join(
+        f"{qty} × {sku} @ {price:g} = {line_total:g}"
+        for (sku, qty), price, line_total in zip(q.lines, figures.unit_prices, figures.line_totals)
+    )
+    return f"TOTAL={figures.total:g}\n{breakdown}"
+
+
+DESK_TOOLS = [lookup_price, search_catalogue, add_to_basket, remove_from_basket, view_basket, loyalty_discount, eid_gift_wrap]
+SPECIALIST_TOOLS = [search_catalogue, quote]
