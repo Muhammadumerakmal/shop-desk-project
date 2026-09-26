@@ -40,6 +40,56 @@ def test_invented_amount_stock_and_sku_fail(make_context):
     assert kinds == {"price", "stock", "sku"}
 
 
+def test_only_a_standalone_currency_word_counts_as_an_amount(make_context):
+    """A word that merely ends in `Rs` is not a price: "hours 10" is not "Rs 10".
+
+    Plausible shop sentences end in `rs` and are followed by a number — "opening hours 10 to 10",
+    "3 orders 2 days ago". Reading the tail of those words as a currency token refused the
+    customer's own wording and then paid for a re-quote to say the same thing again.
+    """
+    ctx = make_context()
+    for innocent in (
+        "Opening hours 10 to 10, every day.",
+        "We have served 2 orders 3 days ago.",
+        "You have 3 orders 2 days ago and 1 last week.",
+    ):
+        assert check_output(innocent, ctx) == [], innocent
+
+
+def test_every_real_currency_form_is_still_caught(make_context):
+    """The lookbehind must not weaken FR-6: a real amount is still refused, in every written form."""
+    ctx = make_context()
+    for text in (
+        "The kettle is Rs 5,000 today.",
+        "Our customers Rs 5,000 orders are rare.",
+        "That is PKR 5,000 for the kettle.",
+        "Only Rs. 999 for the lot.",
+        "The kettle is \u20a8 5,000 exactly.",
+    ):
+        assert check_output(text, ctx), text
+    # and a catalogue-backed figure in each form still passes
+    for text in ("The kettle is PKR 4,200.", "The kettle is Rs 4,200.", "The kettle is \u20a8 4,200."):
+        assert check_output(text, ctx) == [], text
+
+
+def test_an_unreadable_catalogue_refuses_figures_but_not_a_handoff(make_context, catalogue_file):
+    """FR-6 with nothing to check against: refuse a figure, do not strand a customer.
+
+    An unreadable catalogue cannot back an amount, so an answer quoting one is still refused, and a
+    typed order — which is nothing but figures — is refused outright. But a staff handoff quotes no
+    figure at all, so refusing it would cost the customer their escalation for no truth lost.
+    """
+    ctx = make_context()
+    catalogue_file.write_text("{broken")
+
+    handoff = "I'm sorry about that. A member of staff will follow up with you."
+    assert check_output(handoff, ctx) == [], "nothing here needs the catalogue to be verified"
+
+    assert [v.kind for v in check_output("The kettle is PKR 4,200.", ctx)] == ["catalogue"]
+    order = Order(order_id="O", status="confirmed", items=[LineItem(sku="KTL-01", qty=1, unit_price=4200)], total=4200)
+    assert [v.kind for v in check_output(order, ctx)] == ["catalogue"]
+
+
 def test_tool_issued_totals_pass_and_are_recomputed_from_the_file(make_context, catalogue_file):
     ctx = make_context()
     text = "Three kettles come to PKR 12,600."

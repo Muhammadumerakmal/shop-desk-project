@@ -30,3 +30,13 @@ async def test_prompt_sent_to_model_is_the_resolved_one(make_session, provider):
     await session.ask("Can you deliver today?")
     sent = provider.models[FAST].calls[0].system_instructions
     assert "opens tomorrow at 10:00" in sent
+
+
+async def test_prompt_says_a_total_needs_view_basket_this_turn(make_session):
+    """FR-6 with FR-3: found live. Without this the Desk multiplies add_to_basket's unit price
+    itself, and the catalogue guardrail refuses a perfectly good basket total as unbacked."""
+    session = make_session(clock=fixed_clock(14))
+    prompt = await resolved_prompt(session.agents.desk, session.context)
+    assert "call view_basket in this turn" in prompt
+    assert "returns no total" in prompt
+    assert "refused" in prompt

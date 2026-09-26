@@ -60,3 +60,33 @@ async def test_desk_handoff_escalates_with_a_typed_reason_and_clean_history(make
     sent_types = {item.get("type") for item in escalation_call.input if isinstance(item, dict)}
     assert "function_call" not in sent_types and "function_call_output" not in sent_types
     assert reply.handoff_audit.before.get("tool", 0) >= 2 and "tool" not in reply.handoff_audit.after
+
+
+async def test_escalation_survives_an_unreadable_catalogue(make_session, provider, catalogue_file):
+    """FR-10 + NFR-4: a broken catalogue must not cost the customer their staff handoff.
+
+    The handoff quotes no figure, so there is nothing to verify and the turn must complete. The
+    draft order *is* all figures, so it is dropped rather than filled in with an unverified price.
+    """
+    session = make_session()
+    provider.script(
+        FAST,
+        [
+            [function_call("add_to_basket", {"sku": "KTL-01", "qty": 3}, call_id="a1")],
+            [assistant_message("Three kettles are in your basket.")],
+            [function_call("escalate_to_human", {"reason": "complaint", "note": "arrived broken"}, call_id="e1")],
+            [assistant_message("I'm sorry about that. A member of staff will follow up with you.")],
+        ],
+    )
+    await session.ask("Add three kettles")
+    catalogue_file.write_text("{broken")  # the shop's catalogue goes unreadable mid-conversation
+
+    reply = await session.ask("The last one arrived smashed and I want to complain.")
+
+    assert isinstance(reply.escalation, EscalationReason)
+    assert reply.escalation.reason == "complaint"  # staff still get the typed reason
+    assert "member of staff" in reply.text.lower()
+    assert reply.handoff_audit is not None  # and the trimmed history still travelled
+    assert reply.order is None, "no unverified price reaches staff either"
+    assert reply.kind == "reasoning" and not reply.requoted, "no re-quote was needed"
+    assert session.context.basket == {"KTL-01": 3}, "the basket survives for staff to read"

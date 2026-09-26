@@ -175,7 +175,8 @@ class DeskSession:
             return await self._bargaining(trip, text)
         except OutputGuardrailTripwireTriggered:
             self.context.basket = basket_before
-            self.context.ledger.block(requoted=True)
+            # No re-quote happens on this path, so only the block is counted (XR-4).
+            self.context.ledger.block(requoted=False)
             return self._finish_without_result(text, REFUSAL, "refused")
         except MaxTurnsExceeded:
             self.ended = True
@@ -260,20 +261,7 @@ class DeskSession:
 
     def _escalated(self, text: str, calls: int, requoted: bool) -> Reply:
         """FR-10: hand staff a typed reason and, if there is a basket, an 'escalated' order."""
-        order = None
-        if self.context.basket:
-            catalogue = load_catalogue(self.context.catalogue_path)
-            items = [
-                LineItem(sku=sku, qty=qty, unit_price=catalogue.get(sku).price)
-                for sku, qty in self.context.basket.items()
-                if catalogue.get(sku) is not None
-            ]
-            order = Order(
-                order_id=self.context.draft_order_id,
-                status="escalated",
-                items=items,
-                total=round(sum(i.qty * i.unit_price for i in items), 2),
-            )
+        order = self._escalated_order()
         return Reply(
             text,
             kind="reasoning",
@@ -282,6 +270,32 @@ class DeskSession:
             requoted=requoted,
             escalation=self.context.escalation,
             handoff_audit=self.context.handoff_audit,
+        )
+
+    def _escalated_order(self) -> Order | None:
+        """The draft order for staff, or None if the catalogue cannot price it.
+
+        The typed reason and the basket still reach staff through context and the trimmed history.
+        What is dropped is the priced summary, because a price no longer backed by the file must
+        not be shown (NFR-3) and the failure must not become a traceback (NFR-4).
+        """
+        if not self.context.basket:
+            return None
+        try:
+            catalogue = load_catalogue(self.context.catalogue_path)
+        except CatalogueError as exc:
+            log.warning("escalation: no draft order (%s)", exc)
+            return None
+        items = [
+            LineItem(sku=sku, qty=qty, unit_price=catalogue.get(sku).price)
+            for sku, qty in self.context.basket.items()
+            if catalogue.get(sku) is not None
+        ]
+        return Order(
+            order_id=self.context.draft_order_id,
+            status="escalated",
+            items=items,
+            total=round(sum(i.qty * i.unit_price for i in items), 2),
         )
 
     def _confirm_order(self, order: Order, calls: int, requoted: bool) -> Reply:

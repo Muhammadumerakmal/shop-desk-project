@@ -73,6 +73,26 @@ async def test_a_guardrail_refusal_is_counted(make_session, provider):
     assert "guardrail blocked 1 answer(s), 1 re-quoted" in session.context.ledger.cost_line()
 
 
+async def test_a_second_refusal_is_a_block_but_not_a_second_requote(make_session, provider):
+    """XR-4 counts refusals and re-quotes, and only one re-quote was ever spent here.
+
+    The first answer is blocked and retried once; the retry is blocked too and the customer is
+    politely refused. That is two refused answers and one retry, so the two counts must differ.
+    """
+    from shop_desk.session import REFUSAL
+
+    session = make_session()
+    provider.script(FAST, [[assistant_message("The kettle is PKR 3,999.")]])  # invented
+    provider.script(REASONING, [[assistant_message("Still PKR 3,500.")]])  # invented again
+
+    reply = await session.ask("How much is the kettle?")
+
+    assert reply.text == REFUSAL and reply.kind == "refused"
+    assert session.context.ledger.guardrail_blocks == 2
+    assert session.context.ledger.requotes == 1
+    assert "guardrail blocked 2 answer(s), 1 re-quoted" in session.context.ledger.cost_line()
+
+
 async def test_a_clean_conversation_reports_no_blocks(make_session, provider):
     session = make_session()
     provider.script(FAST, [[function_call("lookup_price", {"product": "kettle"}, call_id="c1")]])

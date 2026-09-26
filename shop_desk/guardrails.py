@@ -25,7 +25,10 @@ from shop_desk.pricing import LOYALTY_RATE, quote_figures
 from shop_desk.schemas import EscalationReason, Order
 
 _NUM = r"(\d[\d,]*(?:\.\d+)?)"
-AMOUNT_RE = re.compile(rf"(?:PKR|Rs\.?|₨)\s*{_NUM}|{_NUM}\s*(?:PKR|rupees)\b", re.IGNORECASE)
+# The currency word must stand on its own, or the tail of any word ending in `rs` reads as `Rs`:
+# "opening hours 10 to 10" and "3 orders 2 days ago" both did. A lookbehind rather than `\b`,
+# because `\b` cannot precede the non-word character `₨`.
+AMOUNT_RE = re.compile(rf"(?<![A-Za-z])(?:PKR|Rs\.?|₨)\s*{_NUM}|{_NUM}\s*(?:PKR|rupees)\b", re.IGNORECASE)
 STOCK_RE = re.compile(r"\b(\d+)\s+(?:units?\s+|pieces?\s+)?(?:in stock|left|available)\b", re.IGNORECASE)
 SKU_RE = re.compile(r"\b[A-Z]{3}-\d{2}\b")
 
@@ -84,11 +87,23 @@ def check_order(order: Order, catalogue: Catalogue, context: ShopContext) -> lis
     return violations
 
 
+def claims_catalogue_figures(text: str) -> bool:
+    """Does this text quote something only the catalogue can back?"""
+    return bool(AMOUNT_RE.search(text) or STOCK_RE.search(text) or SKU_RE.search(text))
+
+
 def check_output(output: Any, context: ShopContext) -> list[Violation]:
     try:
         catalogue = load_catalogue(context.catalogue_path)
     except CatalogueError as exc:
-        return [Violation("catalogue", "", f"cannot verify against the catalogue: {exc}")]
+        # An unreadable catalogue cannot back an amount, a stock figure or a SKU, so anything
+        # quoting one is refused, and a typed order — which is nothing but figures — is refused
+        # outright. An answer that quotes none of them has nothing to verify, so refusing it would
+        # strand a customer who never asked for a price (an escalation, an apology) for no truth
+        # gained. (FR-6, FR-10)
+        if isinstance(output, Order) or claims_catalogue_figures(str(output)):
+            return [Violation("catalogue", "", f"cannot verify against the catalogue: {exc}")]
+        return []
     if isinstance(output, Order):
         return check_order(output, catalogue, context)
     return check_text(str(output), catalogue, context)

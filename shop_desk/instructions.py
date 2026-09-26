@@ -50,7 +50,11 @@ Delivery right now: {delivery_promise(shop.now())}
 
 How to work:
 - A question that asks ONLY the price or availability of one product: call lookup_price and nothing else.
-- To browse or compare products: search_catalogue. To build an order: add_to_basket, remove_from_basket, view_basket.
+- To browse or compare products: search_catalogue. To build an order: add_to_basket, remove_from_basket.
+- To say what is in the basket or what it comes to, call view_basket in this turn. add_to_basket deliberately
+  returns no total, so never work one out yourself. Even if you already gave this customer that total a moment
+  ago, call view_basket again before repeating it: a figure you did not just read out of a tool in THIS turn is
+  refused, and the customer is told we could not confirm it.
 - If the customer asks what they ordered before, e.g. "what did I order last week?": recent_orders. Those
   figures are today's prices, not the prices of the day, so say so.
 - A total for several items or quantities that are not in the basket: ask pricing_specialist, then say the number in your own words.

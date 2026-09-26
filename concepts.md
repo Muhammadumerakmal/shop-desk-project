@@ -415,5 +415,5 @@ Phase 0 artifacts, and `git log --reverse` shows they came first.
 | XR-4 another shop needs no code change | `tests/test_real_catalogue.py` |
 | XR-4 a blocked answer is counted | `tests/test_real_catalogue.py::test_a_guardrail_refusal_is_counted` |
 
-Run everything offline with `uv run pytest -q` — 106 checks, no API keys needed
+Run everything offline with `uv run pytest -q` — the full suite, no API keys needed
 (`agents.testing.ScriptedModel`).

@@ -2,9 +2,26 @@
 
 import json
 
-from shop_desk.tools import add_to_basket, lookup_price, remove_from_basket, search_catalogue, view_basket
+import pytest
+
+from shop_desk.tools import (
+    DESK_TOOLS,
+    SPECIALIST_TOOLS,
+    add_to_basket,
+    eid_gift_wrap,
+    lookup_price,
+    loyalty_discount,
+    quote,
+    recent_orders,
+    remove_from_basket,
+    search_catalogue,
+    view_basket,
+)
 
 from tests.conftest import invoke
+
+# A model that hallucinates its arguments must still get a sentence back, never an exception.
+MALFORMED_ARGS = ("{", "", "[]", "null", '"kettle"', '{"product": }', '{"product": 5,}', "{'product': 'kettle'}")
 
 
 async def test_lookup_price_sentence(make_context):
@@ -47,3 +64,29 @@ async def test_bad_catalogue_values_are_a_sentence(make_context, catalogue_file)
     data["products"][0]["price"] = "free"
     catalogue_file.write_text(json.dumps(data))
     assert "unavailable" in await invoke(lookup_price, ctx, product="kettle")
+
+
+def _exposed_tools() -> list:
+    """Every tool a customer-facing agent can be offered, without duplicates."""
+    seen, tools = set(), []
+    for tool in [*DESK_TOOLS, *SPECIALIST_TOOLS]:
+        if tool.name not in seen:
+            seen.add(tool.name)
+            tools.append(tool)
+    return tools
+
+
+async def _invoke_raw(tool, context, arguments: str):
+    from agents.tool_context import ToolContext
+
+    tool_ctx = ToolContext(context=context, tool_name=tool.name, tool_call_id="test-call", tool_arguments=arguments)
+    return await tool.on_invoke_tool(tool_ctx, arguments)
+
+
+@pytest.mark.parametrize("tool", _exposed_tools(), ids=lambda t: t.name)
+@pytest.mark.parametrize("arguments", MALFORMED_ARGS, ids=lambda a: repr(a) or "empty")
+async def test_malformed_arguments_never_raise_into_the_runner(tool, arguments, make_context):
+    """Constitution Article 4.2: a model that sends bad JSON gets a sentence, not a traceback."""
+    result = await _invoke_raw(tool, make_context(), arguments)
+    assert isinstance(result, str), f"{tool.name} returned {type(result).__name__}, not a sentence"
+    assert result.strip(), f"{tool.name} returned nothing the model could use"

@@ -24,7 +24,7 @@ human, **without wasting money**:
 ```bash
 uv sync
 cp .env.example .env          # add OPENAI_API_KEY (model calls and traces)
-uv run pytest -q              # 106 offline checks, no keys needed
+uv run pytest -q              # the offline suite, no keys needed
 uv run chainlit run app.py -w # browser UI
 ```
 
