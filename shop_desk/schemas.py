@@ -26,6 +26,13 @@ class Order(BaseModel):
     total: float
 
 
+class EscalationReason(BaseModel):
+    """FR-10: why the Desk gave up, as a typed value rather than a sentence."""
+
+    reason: Literal["bargaining", "complaint", "unavailable_item", "customer_asked_for_human", "stuck"]
+    note: str = Field(default="", max_length=120, description="one short line for the member of staff")
+
+
 @dataclass(frozen=True)
 class OrderCheck:
     model_total: float

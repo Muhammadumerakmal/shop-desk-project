@@ -17,6 +17,9 @@ from agents import (
     set_tracing_disabled,
     set_tracing_export_api_key,
 )
+from agents.run import set_default_agent_runner
+
+from shop_desk.cost import LedgerRunner
 
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 DEFAULT_FAST_MODEL = "gemini-2.5-flash"
@@ -84,6 +87,9 @@ def configure_global(settings: Settings) -> None:
     set_default_openai_client(client, use_for_tracing=False)
     set_default_openai_api("chat_completions")
     os.environ[DEFAULT_MODEL_ENV] = settings.fast_model  # the global default model
+
+    # FR-11: every Runner.run in the process, nested ones included, goes through the ledger.
+    set_default_agent_runner(LedgerRunner())
 
     if settings.tracing and settings.openai_api_key:
         set_tracing_export_api_key(settings.openai_api_key)

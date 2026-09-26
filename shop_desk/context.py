@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from shop_desk.catalogue import CATALOGUE_PATH
+from shop_desk.cost import CostLedger
 
 PKT = timezone(timedelta(hours=5), name="PKT")  # Pakistan time, no DST
 
@@ -42,8 +43,11 @@ class ShopContext:
     draft_order_id: str = field(default_factory=new_order_id)
     issued_quotes: list[Quote] = field(default_factory=list)  # reset every run
     fast_path_used: bool = False  # set by lookup_price, read by the cost line
+    escalation: Any = None  # EscalationReason, set by the handoff (FR-10)
+    handoff_audit: Any = None  # HandoffAudit: before/after of the transferred history
     clock: Callable[[], datetime] | None = None  # simulated time for FR-4
     catalogue_path: Path = CATALOGUE_PATH
+    ledger: CostLedger = field(default_factory=CostLedger)  # FR-11
 
     def now(self) -> datetime:
         return self.clock() if self.clock else datetime.now(PKT)

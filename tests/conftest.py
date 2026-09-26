@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from agents import Model, ModelProvider, set_tracing_disabled
+from agents import Model, ModelProvider, Usage, set_tracing_disabled
 from agents.testing import ScriptedModel
 
 from shop_desk.catalogue import CATALOGUE_PATH, load_catalogue
@@ -27,16 +27,24 @@ class ScriptedProvider(ModelProvider):
     def __init__(self) -> None:
         self.models: dict[str, ScriptedModel] = {}
         self.requested: list[str | None] = []
+        # every scripted call reports real-looking usage, so cost numbers are testable
+        self.usage = Usage(requests=1, input_tokens=100, output_tokens=10, total_tokens=110)
+
+    def _model(self, name: str) -> ScriptedModel:
+        if name not in self.models:
+            self.models[name] = ScriptedModel()
+            self.models[name].set_default_usage(self.usage)
+        return self.models[name]
 
     def script(self, name: str, steps: list) -> ScriptedModel:
-        model = self.models.setdefault(name, ScriptedModel())
+        model = self._model(name)
         model.extend(steps)
         return model
 
     def get_model(self, model_name: str | None) -> Model:
         self.requested.append(model_name)
         resolved = model_name or os.environ[DEFAULT_MODEL_ENV]  # same rule the SDK uses
-        return self.models.setdefault(resolved, ScriptedModel())
+        return self._model(resolved)
 
     def calls(self, name: str) -> int:
         return len(self.models[name].calls) if name in self.models else 0

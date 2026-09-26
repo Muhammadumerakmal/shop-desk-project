@@ -1,13 +1,15 @@
 """One customer conversation: `DeskSession.ask()` runs one customer turn.
 
 Keeps the conversation history and the ShopContext together, so two sessions never share a
-basket. Every run-level failure becomes a polite sentence here (NFR-4). This is also where the
-run level of model configuration lives: the re-quote path (FR-1).
+basket (FR-12). Every run-level failure becomes a polite sentence here (NFR-4). This is also where
+the run level of model configuration lives: the re-quote path (FR-1). A session owns one trace,
+so a whole conversation is one trace (FR-13).
 """
 
 from __future__ import annotations
 
 import logging
+import uuid
 from dataclasses import dataclass
 from typing import Literal
 
@@ -22,13 +24,19 @@ from agents import (
     RunResult,
     Runner,
     TResponseInputItem,
+    custom_span,
+    trace,
 )
+from agents.tracing.scope import Scope
 
-from shop_desk.catalogue import money
+from shop_desk.catalogue import load_catalogue, money
 from shop_desk.config import Settings
 from shop_desk.context import ShopContext, new_order_id
+from shop_desk.cost import CostHooks, TurnRecord
 from shop_desk.desk_agents import ShopDeskAgents
-from shop_desk.schemas import Order, OrderCheck, check_order_total
+from shop_desk.handoff_filters import HandoffAudit
+from shop_desk.history import trim_history
+from shop_desk.schemas import EscalationReason, LineItem, Order, OrderCheck, check_order_total
 
 log = logging.getLogger(__name__)
 
@@ -59,6 +67,10 @@ class Reply:
     order: Order | None = None
     order_check: OrderCheck | None = None
     requoted: bool = False
+    escalation: EscalationReason | None = None
+    handoff_audit: HandoffAudit | None = None
+    turn_cost: TurnRecord | None = None
+    cost_line: str = ""
 
 
 class DeskSession:
@@ -79,6 +91,21 @@ class DeskSession:
         self.history: list[TResponseInputItem] = []
         self.turn = 0
         self.ended = False
+        self.hooks = CostHooks()
+        # FR-13: one trace for the whole conversation, started now, finished in close().
+        self.trace = trace(
+            workflow_name="Shop Desk conversation",
+            group_id=f"desk-{uuid.uuid4().hex[:12]}",
+            metadata={"shop": context.shop, "tier": context.tier},
+        )
+        self.trace.start()
+
+    @property
+    def trace_url(self) -> str:
+        return f"https://platform.openai.com/traces/trace?trace_id={self.trace.trace_id}"
+
+    def close(self) -> None:
+        self.trace.finish()
 
     def _run_config(self, **overrides) -> RunConfig:
         if self.model_provider is not None:
@@ -92,6 +119,7 @@ class DeskSession:
             run_input,
             context=self.context,
             max_turns=self.max_turns,
+            hooks=self.hooks,
             run_config=run_config,
         )
 
@@ -101,9 +129,25 @@ class DeskSession:
 
     async def ask(self, text: str) -> Reply:
         if self.ended:
-            return Reply(CLOSED, kind="ended")
+            return Reply(CLOSED, kind="ended", cost_line=self.context.ledger.cost_line())
         self.turn += 1
-        run_input = [*self.history, {"role": "user", "content": text}]
+        self.context.ledger.start_turn()
+        self.context.escalation = self.context.handoff_audit = None
+        token = Scope.set_current_trace(self.trace)  # every run of this turn joins the one trace
+        try:
+            with custom_span(f"turn {self.turn}", {"customer_turn": self.turn}) as span:
+                reply = await self._ask(text)
+                span.span_data.name = f"turn {self.turn} · {reply.kind}"
+                span.span_data.data["kind"] = reply.kind
+        finally:
+            Scope.reset_current_trace(token)
+        reply.turn_cost = self.context.ledger.close_turn(reply.kind)
+        reply.cost_line = self.context.ledger.cost_line()
+        return reply
+
+    async def _ask(self, text: str) -> Reply:
+        # FR-12: what is sent is trimmed; the basket lives in context, not in history.
+        run_input = [*trim_history(self.history), {"role": "user", "content": text}]
         basket_before = dict(self.context.basket)
         requoted = False
         try:
@@ -129,6 +173,8 @@ class DeskSession:
         output = result.final_output
         if isinstance(output, Order):
             return self._confirm_order(output, calls, requoted)
+        if result.last_agent is self.agents.escalation:
+            return self._escalated(str(output), calls, requoted)
         kind: TurnKind = "fast-path" if self.context.fast_path_used and not requoted else "reasoning"
         return Reply(str(output), kind=kind, model_calls=calls, requoted=requoted)
 
@@ -140,6 +186,32 @@ class DeskSession:
             {"role": "assistant", "content": message},
         ]
         return Reply(message, kind=kind)
+
+    def _escalated(self, text: str, calls: int, requoted: bool) -> Reply:
+        """FR-10: hand staff a typed reason and, if there is a basket, an 'escalated' order."""
+        order = None
+        if self.context.basket:
+            catalogue = load_catalogue(self.context.catalogue_path)
+            items = [
+                LineItem(sku=sku, qty=qty, unit_price=catalogue.get(sku).price)
+                for sku, qty in self.context.basket.items()
+                if catalogue.get(sku) is not None
+            ]
+            order = Order(
+                order_id=self.context.draft_order_id,
+                status="escalated",
+                items=items,
+                total=round(sum(i.qty * i.unit_price for i in items), 2),
+            )
+        return Reply(
+            text,
+            kind="reasoning",
+            model_calls=calls,
+            order=order,
+            requoted=requoted,
+            escalation=self.context.escalation,
+            handoff_audit=self.context.handoff_audit,
+        )
 
     def _confirm_order(self, order: Order, calls: int, requoted: bool) -> Reply:
         """FR-5: the customer sees an order rendered by Python from the validated structure."""

@@ -4,6 +4,8 @@
 the same graph with scripted models, and so the global default is configured before any agent
 exists.
 
+Graph: Desk --tool--> Pricing specialist · Desk --handoff--> Order clerk · Desk --handoff--> Human escalation
+
 Model levels (FR-1):
   global  -> config.configure_global()         Desk, specialist base and its clones (no model=)
   agent   -> Order clerk: model=reasoning_model  (here)
@@ -15,13 +17,15 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from agents import Agent, ModelSettings, RunResult, StopAtTools, handoff
+from agents import Agent, ModelSettings, RunContextWrapper, RunResult, StopAtTools, handoff
 
 from shop_desk.config import Settings
 from shop_desk.context import ShopContext
+from shop_desk.cost import PricingHooks
 from shop_desk.guardrails import catalogue_guardrail
-from shop_desk.instructions import desk_instructions
-from shop_desk.schemas import Order
+from shop_desk.handoff_filters import escalation_filter
+from shop_desk.instructions import desk_instructions, escalation_instructions
+from shop_desk.schemas import EscalationReason, Order
 from shop_desk.tools import DESK_TOOLS, FAST_PATH_TOOL, SPECIALIST_TOOLS, view_basket
 
 ORDER_CLERK_INSTRUCTIONS = """You are the order clerk. The customer has confirmed they want to order what is in their basket.
@@ -85,9 +89,15 @@ def build_agents(settings: Settings) -> ShopDeskAgents:
     )
     escalation = specialist_base.clone(
         name="Human escalation",
-        instructions=BASE_INSTRUCTIONS,  # replaced with dynamic instructions in Phase 3
+        instructions=escalation_instructions,  # FR-10: reads the typed reason from context
         model_settings=ModelSettings(temperature=0.4, max_tokens=350),
     )
+    # FR-11: agent-level hooks on the Pricing specialist only. Set after cloning so the base
+    # and the escalation clone stay hook-free.
+    pricing.hooks = PricingHooks()
+
+    async def on_escalate(ctx: RunContextWrapper[ShopContext], reason: EscalationReason) -> None:
+        ctx.context.escalation = reason
 
     desk = Agent[ShopContext](
         name="Shop Desk",
@@ -112,6 +122,18 @@ def build_agents(settings: Settings) -> ShopDeskAgents:
                     "Transfer when the customer clearly confirms they want to place the order for "
                     "what is in their basket."
                 ),
+            ),
+            handoff(  # FR-10: typed reason + trimmed history
+                escalation,
+                tool_name_override="escalate_to_human",
+                tool_description_override=(
+                    "Hand the customer to a member of staff when you cannot help: bargaining or "
+                    "discount demands, complaints, an unavailable item they insist on, a request "
+                    "for a human, or when you are stuck. Give the reason and a short note."
+                ),
+                on_handoff=on_escalate,
+                input_type=EscalationReason,
+                input_filter=escalation_filter,
             ),
         ],
         output_guardrails=guardrails,
